@@ -3,8 +3,9 @@
 List of TODO items:
 
 - python/goodwe as reference
-- example/refenrece a command line client under examples/cmd/goodwe
+- example/reference a command line client under examples/cmd/goodwe
   - see provided main.go as usage template
+- examples/output.log contains sensors read from GW12K-ET-20 inverter
 
 Rules:
 - code must be 'gofmt' clean
