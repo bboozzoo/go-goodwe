@@ -154,8 +154,8 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 	// Modbus RTU over DTLS:
 	// Slave ID (1) | Function Code (1) | Register Address (2) | Quantity (2) | CRC (2)
 	request := make([]byte, 8)
-	request[0] = 0xF7                               // Slave ID 247
-	request[1] = 0x03                               // Function Code (Read Holding Registers)
+	request[0] = 0xF7 // Slave ID 247
+	request[1] = 0x03 // Function Code (Read Holding Registers)
 	binary.BigEndian.PutUint16(request[2:4], startReg)
 	binary.BigEndian.PutUint16(request[4:6], quantity)
 
@@ -176,6 +176,7 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 		return nil, fmt.Errorf("modbus read error: %w", err)
 	}
 
+	// TODO better handle fixed 0xaa 0x55 header
 	responseBytes := respBuf[:n]
 	slog.Debug("Received Modbus RTU bulk response", "payload", hex.EncodeToString(responseBytes))
 
@@ -185,7 +186,8 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 
 	// Validate CRC
 	expectedCRC := binary.LittleEndian.Uint16(responseBytes[n-2 : n])
-	actualCRC := calculateCRC16(responseBytes[0 : n-2])
+	// The expectec CRC does not includ the fixed 0xaa 0x55 header
+	actualCRC := calculateCRC16(responseBytes[2 : n-2])
 	if expectedCRC != actualCRC {
 		return nil, fmt.Errorf("modbus CRC mismatch: expected %04X, got %04X", expectedCRC, actualCRC)
 	}
