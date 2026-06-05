@@ -1,0 +1,214 @@
+GoodWe library discovery timed out; trying directed UDP broadcast.
+Discovery response advertises DTLS; using dtls=True.
+Found inverter at 192.168.100.151:8899
+label                           |                                                                                         value | sensor
+--------------------------------|-----------------------------------------------------------------------------------------------|----------------------------
+Timestamp                       |                                                                           2026-06-04 21:42:15 | timestamp
+PV1 Voltage                     |                                                                                       155.3 V | vpv1
+PV1 Current                     |                                                                                         0.0 A | ipv1
+PV1 Power                       |                                                                                           0 W | ppv1
+PV2 Voltage                     |                                                                                       149.8 V | vpv2
+PV2 Current                     |                                                                                         0.0 A | ipv2
+PV2 Power                       |                                                                                           0 W | ppv2
+PV Power                        |                                                                                           0 W | ppv
+PV2 Mode code                   |                                                                                             2 | pv2_mode
+PV2 Mode                        |                                                          PV panels connected, producing power | pv2_mode_label
+PV1 Mode code                   |                                                                                             2 | pv1_mode
+PV1 Mode                        |                                                          PV panels connected, producing power | pv1_mode_label
+On-grid L1 Voltage              |                                                                                         0.0 V | vgrid
+On-grid L1 Current              |                                                                                         0.0 A | igrid
+On-grid L1 Frequency            |                                                                                        0.0 Hz | fgrid
+On-grid L1 Power                |                                                                                           0 W | pgrid
+On-grid L2 Voltage              |                                                                                         0.0 V | vgrid2
+On-grid L2 Current              |                                                                                         0.0 A | igrid2
+On-grid L2 Frequency            |                                                                                        0.0 Hz | fgrid2
+On-grid L2 Power                |                                                                                           0 W | pgrid2
+On-grid L3 Voltage              |                                                                                         0.0 V | vgrid3
+On-grid L3 Current              |                                                                                         0.0 A | igrid3
+On-grid L3 Frequency            |                                                                                        0.0 Hz | fgrid3
+On-grid L3 Power                |                                                                                           0 W | pgrid3
+Grid Mode code                  |                                                                                             2 | grid_mode
+Grid Mode                       |                                                                                         Fault | grid_mode_label
+Total Power                     |                                                                                         480 W | total_inverter_power
+Active Power                    |                                                                                           0 W | active_power
+On-grid Mode code               |                                                                                             0 | grid_in_out
+On-grid Mode                    |                                                                                          Idle | grid_in_out_label
+Reactive Power                  |                                                                                       483 var | reactive_power
+Apparent Power                  |                                                                                          0 VA | apparent_power
+Back-up L1 Voltage              |                                                                                       231.8 V | backup_v1
+Back-up L1 Current              |                                                                                         0.8 A | backup_i1
+Back-up L1 Frequency            |                                                                                      50.07 Hz | backup_f1
+Load Mode L1                    |                                                                                             1 | load_mode1
+Back-up L1 Power                |                                                                                           6 W | backup_p1
+Back-up L2 Voltage              |                                                                                       228.3 V | backup_v2
+Back-up L2 Current              |                                                                                         0.5 A | backup_i2
+Back-up L2 Frequency            |                                                                                      50.07 Hz | backup_f2
+Load Mode L2                    |                                                                                             1 | load_mode2
+Back-up L2 Power                |                                                                                          64 W | backup_p2
+Back-up L3 Voltage              |                                                                                       231.6 V | backup_v3
+Back-up L3 Current              |                                                                                         4.0 A | backup_i3
+Back-up L3 Frequency            |                                                                                      50.08 Hz | backup_f3
+Load Mode L3                    |                                                                                             1 | load_mode3
+Back-up L3 Power                |                                                                                         490 W | backup_p3
+Load L1                         |                                                                                           0 W | load_p1
+Load L2                         |                                                                                           0 W | load_p2
+Load L3                         |                                                                                           0 W | load_p3
+Back-up Load                    |                                                                                         560 W | backup_ptotal
+Load                            |                                                                                           0 W | load_ptotal
+Ups Load                        |                                                                                          18 % | ups_load
+Inverter Temperature (Air)      |                                                                                        47.1 C | temperature_air
+Inverter Temperature (Module)   |                                                                                        44.8 C | temperature_module
+Inverter Temperature (Radiator) |                                                                                        44.8 C | temperature
+Function Bit                    |                                                                                         16385 | function_bit
+Bus Voltage                     |                                                                                       765.5 V | bus_voltage
+NBus Voltage                    |                                                                                       382.7 V | nbus_voltage
+Battery Voltage                 |                                                                                       398.2 V | vbattery1
+Battery Current                 |                                                                                         1.5 A | ibattery1
+Battery Power                   |                                                                                         575 W | pbattery1
+Battery Mode code               |                                                                                             2 | battery_mode
+Battery Mode                    |                                                                                     Discharge | battery_mode_label
+Warning code                    |                                                                                             0 | warning_code
+Safety Country code             |                                                                                            13 | safety_country
+Safety Country                  |                                                                                         PL LV | safety_country_label
+Work Mode code                  |                                                                                             2 | work_mode
+Work Mode                       |                                                                             Normal (Off-Grid) | work_mode_label
+Operation Mode code             |                                                                                             2 | operation_mode
+Error Codes                     |                                                                                     537002496 | error_codes
+Errors                          |                                                        Utility Loss, Vac Failure, Fac Failure | errors
+Total PV Generation             |                                                                                     392.5 kWh | e_total
+Today's PV Generation           |                                                                                      17.8 kWh | e_day
+Total Energy (export)           |                                                                                     286.0 kWh | e_total_exp
+Hours Total                     |                                                                                        1008 h | h_total
+Today Energy (export)           |                                                                                      13.8 kWh | e_day_exp
+Total Energy (import)           |                                                                                       0.4 kWh | e_total_imp
+Today Energy (import)           |                                                                                       0.0 kWh | e_day_imp
+Total Load                      |                                                                                     116.0 kWh | e_load_total
+Today Load                      |                                                                                       0.2 kWh | e_load_day
+Total Battery Charge            |                                                                                     173.5 kWh | e_bat_charge_total
+Today Battery Charge            |                                                                                       9.4 kWh | e_bat_charge_day
+Total Battery Discharge         |                                                                                     152.8 kWh | e_bat_discharge_total
+Today Battery Discharge         |                                                                                       7.0 kWh | e_bat_discharge_day
+Diag Status Code                |                                                                                      50332288 | diagnose_result
+Diag Status                     | BMS: Discharge current low, Meter communication failure, Export power limit set, PF value set | diagnose_result_label
+House Consumption               |                                                                                         575 W | house_consumption
+Commode                         |                                                                                             7 | commode
+RSSI                            |                                                                                             0 | rssi
+Manufacture Code                |                                                                                            10 | manufacture_code
+Meter Test Status               |                                                                                             0 | meter_test_status
+Meter Communication Status      |                                                                                             0 | meter_comm_status
+Active Power L1                 |                                                                                           0 W | active_power1
+Active Power L2                 |                                                                                           0 W | active_power2
+Active Power L3                 |                                                                                           0 W | active_power3
+Active Power Total              |                                                                                           0 W | active_power_total
+Reactive Power Total            |                                                                                         0 var | reactive_power_total
+Meter Power Factor L1           |                                                                                           1.0 | meter_power_factor1
+Meter Power Factor L2           |                                                                                         0.999 | meter_power_factor2
+Meter Power Factor L3           |                                                                                           1.0 | meter_power_factor3
+Meter Power Factor              |                                                                                           1.0 | meter_power_factor
+Meter Frequency                 |                                                                                      49.97 Hz | meter_freq
+Meter Total Energy (export)     |                                                                                     20.33 kWh | meter_e_total_exp
+Meter Total Energy (import)     |                                                                                     18.42 kWh | meter_e_total_imp
+Meter Active Power L1           |                                                                                           0 W | meter_active_power1
+Meter Active Power L2           |                                                                                           0 W | meter_active_power2
+Meter Active Power L3           |                                                                                           0 W | meter_active_power3
+Meter Active Power Total        |                                                                                           0 W | meter_active_power_total
+Meter Reactive Power L1         |                                                                                         0 var | meter_reactive_power1
+Meter Reactive Power L2         |                                                                                         0 var | meter_reactive_power2
+Meter Reactive Power L3         |                                                                                         0 var | meter_reactive_power3
+Meter Reactive Power Total      |                                                                                         0 var | meter_reactive_power_total
+Meter Apparent Power L1         |                                                                                          0 VA | meter_apparent_power1
+Meter Apparent Power L2         |                                                                                          0 VA | meter_apparent_power2
+Meter Apparent Power L3         |                                                                                          0 VA | meter_apparent_power3
+Meter Apparent Power Total      |                                                                                          0 VA | meter_apparent_power_total
+Meter Type                      |                                                                                           255 | meter_type
+Meter Software Version          |                                                                                             0 | meter_sw_version
+Meter 2 Active Power            |                                                                                           0 W | meter2_active_power
+Meter 2 Total Energy (export)   |                                                                                       0.0 kWh | meter2_e_total_exp
+Meter 2 Total Energy (import)   |                                                                                       0.0 kWh | meter2_e_total_imp
+Meter 2 Communication Status    |                                                                                             0 | meter2_comm_status
+Meter L1 Voltage                |                                                                                         0.0 V | meter_voltage1
+Meter L2 Voltage                |                                                                                         0.0 V | meter_voltage2
+Meter L3 Voltage                |                                                                                         0.0 V | meter_voltage3
+Meter L1 Current                |                                                                                         0.0 A | meter_current1
+Meter L2 Current                |                                                                                         0.0 A | meter_current2
+Meter L3 Current                |                                                                                         0.0 A | meter_current3
+Meter Total Energy (export) L1  |                                                                                     52.79 kWh | meter_e_total_exp1
+Meter Total Energy (export) L2  |                                                                                     53.35 kWh | meter_e_total_exp2
+Meter Total Energy (export) L3  |                                                                                     96.99 kWh | meter_e_total_exp3
+Meter Total Energy (import) L1  |                                                                                       8.5 kWh | meter_e_total_imp1
+Meter Total Energy (import) L2  |                                                                                      3.81 kWh | meter_e_total_imp2
+Meter Total Energy (import) L3  |                                                                                       9.2 kWh | meter_e_total_imp3
+Battery BMS                     |                                                                                             1 | battery_bms
+Battery Index                   |                                                                                           412 | battery_index
+Battery Status                  |                                                                                             1 | battery_status
+Battery Temperature             |                                                                                        47.2 C | battery_temperature
+Battery Charge Limit            |                                                                                          12 A | battery_charge_limit
+Battery Discharge Limit         |                                                                                          15 A | battery_discharge_limit
+Battery Error L                 |                                                                                             0 | battery_error_l
+Battery State of Charge         |                                                                                          73 % | battery_soc
+Battery State of Health         |                                                                                         100 % | battery_soh
+Battery Modules                 |                                                                                             1 | battery_modules
+Battery Warning L               |                                                                                             0 | battery_warning_l
+Battery Protocol                |                                                                                           294 | battery_protocol
+Battery Error H                 |                                                                                             0 | battery_error_h
+Battery Error                   |                                                                                               | battery_error
+Battery Warning H               |                                                                                             0 | battery_warning_h
+Battery Warning                 |                                                                                               | battery_warning
+Battery Software Version        |                                                                                           771 | battery_sw_version
+Battery Hardware Version        |                                                                                             0 | battery_hw_version
+Battery Max Cell Temperature ID |                                                                                          1553 | battery_max_cell_temp_id
+Battery Min Cell Temperature ID |                                                                                           801 | battery_min_cell_temp_id
+Battery Max Cell Voltage ID     |                                                                                          4129 | battery_max_cell_voltage_id
+Battery Min Cell Voltage ID     |                                                                                          1553 | battery_min_cell_voltage_id
+Battery Max Cell Temperature    |                                                                                        33.0 C | battery_max_cell_temp
+Battery Min Cell Temperature    |                                                                                        28.9 C | battery_min_cell_temp
+Battery Max Cell Voltage        |                                                                                       3.313 V | battery_max_cell_voltage
+Battery Min Cell Voltage        |                                                                          3.3080000000000003 V | battery_min_cell_voltage
+PV Power Total                  |                                                                                           0 W | ppv_total
+PV Channel                      |                                                                                             3 | pv_channel
+PV5 Voltage                     |                                                                                           0 V | vpv5
+PV5 Current                     |                                                                                           0 A | ipv5
+PV6 Voltage                     |                                                                                           0 V | vpv6
+PV6 Current                     |                                                                                           0 A | ipv6
+PV7 Voltage                     |                                                                                           0 V | vpv7
+PV7 Current                     |                                                                                           0 A | ipv7
+PV8 Voltage                     |                                                                                           0 V | vpv8
+PV8 Current                     |                                                                                           0 A | ipv8
+PV9 Voltage                     |                                                                                           0 V | vpv9
+PV9 Current                     |                                                                                           0 A | ipv9
+PV10 Voltage                    |                                                                                           0 V | vpv10
+PV10 Current                    |                                                                                           0 A | ipv10
+PV11 Voltage                    |                                                                                           0 V | vpv11
+PV11 Current                    |                                                                                           0 A | ipv11
+PV12 Voltage                    |                                                                                           0 V | vpv12
+PV12 Current                    |                                                                                           0 A | ipv12
+PV13 Voltage                    |                                                                                           0 V | vpv13
+PV13 Current                    |                                                                                           0 A | ipv13
+PV14 Voltage                    |                                                                                           0 V | vpv14
+PV14 Current                    |                                                                                           0 A | ipv14
+PV15 Voltage                    |                                                                                           0 V | vpv15
+PV15 Current                    |                                                                                           0 A | ipv15
+PV16 Voltage                    |                                                                                           0 V | vpv16
+PV16 Current                    |                                                                                           0 A | ipv16
+MPPT1 Power                     |                                                                                           0 W | pmppt1
+MPPT2 Power                     |                                                                                           0 W | pmppt2
+MPPT3 Power                     |                                                                                           0 W | pmppt3
+MPPT4 Power                     |                                                                                        None W | pmppt4
+MPPT5 Power                     |                                                                                        None W | pmppt5
+MPPT6 Power                     |                                                                                        None W | pmppt6
+MPPT7 Power                     |                                                                                        None W | pmppt7
+MPPT8 Power                     |                                                                                        None W | pmppt8
+MPPT1 Current                   |                                                                                         0.0 A | imppt1
+MPPT2 Current                   |                                                                                         0.0 A | imppt2
+MPPT3 Current                   |                                                                                         0.0 A | imppt3
+MPPT4 Current                   |                                                                                           0 A | imppt4
+MPPT5 Current                   |                                                                                           0 A | imppt5
+MPPT6 Current                   |                                                                                           0 A | imppt6
+MPPT7 Current                   |                                                                                           0 A | imppt7
+MPPT8 Current                   |                                                                                           0 A | imppt8
+Reactive Power L1               |                                                                                         0 var | reactive_power1
+Reactive Power L2               |                                                                                         0 var | reactive_power2
+Reactive Power L3               |                                                                                         0 var | reactive_power3
+Apparent Power L1               |                                                                                          0 VA | apparent_power1
+Apparent Power L2               |                                                                                          0 VA | apparent_power2
+Apparent Power L3               |                                                                                          0 VA | apparent_power3
