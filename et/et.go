@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bbboozzoo/go-goodwe"
+	"github.com/bboozzoo/go-goodwe"
 )
 
 // ETInverter implements the goodwe.Inverter interface for the ET line.
@@ -52,10 +52,10 @@ func (e *ETInverter) Close() error {
 // GetInfo retrieves the inverter information.
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	// Since we don't have a specific "GetInfo" register in our minimal registry,
-	// we'll use the serial number from the probe if possible, 
+	// we'll use the serial number from the probe if possible,
 	// but for this minimal implementation, we'll return a placeholder or error.
 	// A real implementation would read specific Modbus registers for Model/Firmware.
-	
+
 	// For now, we return a dummy info to satisfy the interface.
 	return &goodwe.Info{
 		SerialNumber: "UNKNOWN", // In real life, we'd store this from probeRes
