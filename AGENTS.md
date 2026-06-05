@@ -11,3 +11,59 @@
   - Use `golangci-lint` for verification.
 - **Task Tracking**: Consult `TODO.md` for the current roadmap and pending items.
 - **Testing Strategy**: Refer to the Python test suite (`python/goodwe/tests/`) to understand expected behavior and protocol nuances.
+
+
+## PROTOCOL
+
+Target Port	Transport Protocol	Encryption	Modbus Payload	Header / Trailer
+502	TCP	None	Modbus TCP	7-byte MBAP Header, No CRC
+8899 (Legacy)	UDP	None	Modbus RTU	Raw RTU + 2-byte CRC
+8899 (Modern)	UDP	DTLS	Modbus RTU	Encrypted RTU + 2-byte CRC
+
+The GoodWe Modbus RTU Over UDP ArchitectureWhen communicating with GoodWe ET/EH
+inverters over the Wi-Fi/Dongle interface (Port 8899), the protocol utilizes
+Modbus RTU encapsulation inside network datagrams (UDP or DTLS) rather than
+standard Modbus TCP.
+
+### Frame Structure
+
+Every request sent to the inverter must be structured as a valid Modbus RTU
+frame. It does not use the network-facing MBAP header.
+
+| Component | Size | Value / Range |Purpose |
+| Slave ID | 1 Byte| 0xF7 (Decimal 247) | Identifies the hybrid inverter target. Requests targeting 0x01 are ignored.
+| Function Code| 1 Byte | 0x03 (Read Holding) | Commands the internal processor to fetch register values.
+| Register Address| 2 Bytes| e.g., 0x89 0x1C (35100)| The physical starting register address in Big-Endian format.
+| Quantity | 2 Bytes| e.g., 0x00 0x7D (125 regs)| Number of 16-bit registers to read.
+| CRC16 Trailer| 2 Bytes| Variable (Low, High)| Cyclic Redundancy Check calculated over all previous bytes.
+
+### The Interaction Lifecycle
+
+[ Go Client ]                                         [ GoodWe Dongle ]
+      │                                                      │
+      ├─────── Cleartext UDP Probe (Port 8899) ─────────────>│
+      │                                                      │
+      <─────── Probe Response ("dtls_port:8899") ────────────┤
+      │                                                      │
+      ├─────── DTLS Handshake ──────────────────────────────>│
+      │                                                      │
+      ├─────── Encrypted Modbus RTU Bulk Request ───────────>│ (e.g., Read 125 regs from 35100)
+      │                                                      │
+      <─────── Encrypted Modbus RTU Bulk Response ───────────┤ (Returns AA55 + Data or Error Exception)
+
+### Critical Protocol Quirks
+
+Strict Boundary Constraints (Error 0x83 0x02): The inverter firmware will throw
+an ILLEGAL DATA ADDRESS exception if you attempt to read single registers or
+fractional blocks. You must request predefined bulk blocks (such as the
+telemetry block starting at register 35100).
+
+The AA55 Pre-Header Response: When the inverter responds successfully, the
+decrypted UDP payload usually contains a proprietary framing signature (0xAA
+0x55) prepended to the standard Modbus RTU response block. Your parsing logic
+must find this offset before evaluating the Slave ID and data bytes.
+
+Packet Dropping: The low-power embedded Wi-Fi chips on these dongles frequently
+drop packets or hit transient timeouts under load. Your Go network layer should
+use aggressive timeout deadlines (e.g., 2–3 seconds) and a retry mechanism
+rather than failing immediately on an EOF.
