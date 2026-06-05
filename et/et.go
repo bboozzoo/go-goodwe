@@ -9,8 +9,9 @@ import (
 
 // ETInverter implements the goodwe.Inverter interface for the ET line.
 type ETInverter struct {
-	ip      string
-	service *service
+	ip          string
+	serial      string
+	service     *service
 }
 
 // New creates a new ETInverter instance.
@@ -35,6 +36,8 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 		return fmt.Errorf("connection failed during probe: %w", err)
 	}
 
+	e.serial = probeRes.SerialNumber
+
 	// 2. Connect via DTLS
 	err = e.service.connectDTLS(ctx, probeRes.DTLSPort)
 	if err != nil {
@@ -52,13 +55,9 @@ func (e *ETInverter) Close() error {
 // GetInfo retrieves the inverter information.
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	// Since we don't have a specific "GetInfo" register in our minimal registry,
-	// we'll use the serial number from the probe if possible,
-	// but for this minimal implementation, we'll return a placeholder or error.
-	// A real implementation would read specific Modbus registers for Model/Firmware.
-
-	// For now, we return a dummy info to satisfy the interface.
+	// we'll use the serial number from the probe.
 	return &goodwe.Info{
-		SerialNumber: "UNKNOWN", // In real life, we'd store this from probeRes
+		SerialNumber: e.serial,
 		Model:        "ET-Series",
 		Firmware:     "1.0.0",
 	}, nil
