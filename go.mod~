@@ -1,3 +1,3 @@
-module github.com/bbboozzoo/go-goodwe
+module github.com/bboozzoo/go-goodwe
 
 go 1.26.3
