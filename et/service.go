@@ -3,6 +3,7 @@ package et
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
@@ -118,7 +119,14 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 		InsecureSkipVerify: true, 
 	}
 
-	conn, err := dtls.Dial(addr, config)
+	// Resolve UDP address for DTLS dial
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to resolve UDP address: %w", err)
+	}
+
+	// Call dtls.Dial with 3 arguments: network, addr, config
+	conn, err := dtls.Dial("udp", udpAddr, config)
 	if err != nil {
 		return fmt.Errorf("dtls dial failed: %w", err)
 	}
