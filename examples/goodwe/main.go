@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,8 +16,13 @@ import (
 func main() {
 	// Define flags
 	ip := flag.String("ip", "", "IP address of the GoodWe inverter")
-	interval := flag.Duration("interval", 5*time.Second, "Polling interval (e.g., 5s, 1m)")
+	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
+	readSensor := flag.String("readsensor", "", "Name of the specific sensor to read and exit.")
 	flag.Parse()
+
+	// Setup slog
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(logger)
 
 	// Validate input
 	if *ip == "" {
@@ -35,65 +40,85 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		fmt.Printf("\nReceived signal %v, shutting down...\n", sig)
+		slog.Info("Received interrupt signal", "signal", sig.String())
 		cancel()
 	}()
 
-	fmt.Printf("Initializing connection to ET Inverter at %s...\n", *ip)
+	slog.Info("Initializing connection", "ip", *ip)
 	inverter := et.New(*ip)
 
 	// 1. Connect
 	if err := inverter.Connect(ctx); err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		slog.Error("Failed to connect", "error", err)
+		os.Exit(1)
 	}
-	fmt.Println("Connected successfully!")
+	slog.Info("Connected successfully")
 
 	// Ensure cleanup happens
 	defer func() {
-		fmt.Println("Closing connection...")
+		slog.Info("Closing connection...")
 		if err := inverter.Close(); err != nil {
-			log.Printf("Error during close: %v", err)
+			slog.Error("Error during close", "error", err)
 		} else {
-			fmt.Println("Connection closed cleanly.")
+			slog.Info("Connection closed cleanly")
 		}
 	}()
 
 	// 2. Get Device Info
-	fmt.Println("\n--- Device Information ---")
+	slog.Info("--- Device Information ---")
 	info, err := inverter.GetInfo(ctx)
 	if err != nil {
-		log.Printf("Could not retrieve device info: %v", err)
+		slog.Warn("Could not retrieve device info", "error", err)
 	} else {
-		fmt.Printf("  Model:     %s\n", info.Model)
-		fmt.Printf("  Serial:    %s\n", info.SerialNumber)
-		fmt.Printf("  Firmware:  %s\n", info.Firmware)
+		slog.Info("Device Info", "model", info.Model, "serial", info.SerialNumber, "firmware", info.Firmware)
 	}
 
-	// 3. Continuous Polling
-	fmt.Printf("\n--- Starting sensor polling (every %v) ---\n", *interval)
-	fmt.Println("Press Ctrl+C to stop.")
-	
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Polling terminated.")
-			return
-		case <-time.After(*interval):
-			sensors, err := inverter.GetSensors(ctx)
-			if err != nil {
-				log.Printf("Error reading sensors: %v", err)
-				continue
-			}
-
-			fmt.Printf("[%s] ", time.Now().Format("15:04:05"))
-			if len(sensors) == 0 {
-				fmt.Print("No sensor data available.")
-			} else {
-				for name, val := range sensors {
-					fmt.Printf("%s: %.2f | ", name, val)
-				}
-			}
-			fmt.Println()
+	// 3. Handle specific sensor read request
+	if *readSensor != "" {
+		slog.Info("Single sensor read requested", "sensor", *readSensor)
+		sensors, err := inverter.GetSensors(ctx)
+		if err != nil {
+			slog.Error("Failed to read sensors", "error", err)
+			os.Exit(1)
 		}
+		if val, ok := sensors[*readSensor]; ok {
+			fmt.Printf("%s: %.2f\n", *readSensor, val)
+			os.Exit(0)
+		} else {
+			slog.Error("Sensor not found", "sensor", *readSensor)
+			os.Exit(1)
+		}
+	}
+
+	// 4. Polling loop (only if -poll is provided)
+	if *pollInterval > 0 {
+		slog.Info("--- Starting sensor polling", "interval", pollInterval)
+		fmt.Println("Press Ctrl+C to stop.")
+
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("Polling terminated by user")
+				return
+			case <-time.After(*pollInterval):
+				sensors, err := inverter.GetSensors(ctx)
+				if err != nil {
+					slog.Error("Error reading sensors", "error", err)
+					continue
+				}
+
+				fmt.Printf("[%s] ", time.Now().Format("15:04:05"))
+				if len(sensors) == 0 {
+					fmt.Print("No sensor data available.")
+				} else {
+					for name, val := range sensors {
+						fmt.Printf("%s: %.2f | ", name, val)
+					}
+				}
+				fmt.Println()
+			}
+		}
+	} else {
+		slog.Info("No polling requested (use -poll <time>). Exiting.")
 	}
 }

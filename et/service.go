@@ -3,8 +3,10 @@ package et
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"regexp"
 	"strconv"
@@ -16,10 +18,10 @@ import (
 
 // service handles low-level communication with the inverter.
 type service struct {
-	ip         string
-	probePort  int
-	dtlsPort   int
-	dtlsConn   net.Conn
+	ip        string
+	probePort int
+	dtlsPort  int
+	dtlsConn  net.Conn
 }
 
 // newService initializes a new service instance.
@@ -34,6 +36,8 @@ func newService(ip string) *service {
 func (s *service) probe(ctx context.Context) (*probeResult, error) {
 	// The probe packet: "WIFIKIT-214028-READ"
 	probeMsg := []byte("WIFIKIT-214028-READ")
+
+	slog.Debug("Sending UDP probe", "payload", hex.EncodeToString(probeMsg))
 
 	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", s.ip, s.probePort), 2*time.Second)
 	if err != nil {
@@ -59,7 +63,10 @@ func (s *service) probe(ctx context.Context) (*probeResult, error) {
 		return nil, fmt.Errorf("failed to read probe response: %w", err)
 	}
 
-	response := string(buf[:n])
+	responseBytes := buf[:n]
+	slog.Debug("Received UDP probe response", "payload", hex.EncodeToString(responseBytes))
+
+	response := string(responseBytes)
 	return s.parseProbeResponse(response)
 }
 
@@ -106,6 +113,7 @@ func (s *service) parseProbeResponse(resp string) (*probeResult, error) {
 // connectDTLS establishes the secure connection using pion/dtls.
 func (s *service) connectDTLS(ctx context.Context, port int) error {
 	addr := fmt.Sprintf("%s:%d", s.ip, port)
+	slog.Debug("Attempting DTLS connection", "address", addr)
 
 	// DTLS config - In a real scenario, we might need to handle certificates.
 	// For GoodWe, it often uses a specific or no-verification setup depending on the model.
@@ -116,7 +124,7 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 			dtls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		},
 		// In many IoT cases, we might need InsecureSkipVerify if they use self-signed certs.
-		InsecureSkipVerify: true, 
+		InsecureSkipVerify: true,
 	}
 
 	// Resolve UDP address for DTLS dial
@@ -133,6 +141,7 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 
 	s.dtlsConn = conn
 	s.dtlsPort = port
+	slog.Debug("DTLS connection established")
 	return nil
 }
 
@@ -154,6 +163,8 @@ func (s *service) readModbusRegister(ctx context.Context, reg uint16) (uint16, e
 	binary.BigEndian.PutUint16(request[8:10], reg)  // Register Address
 	binary.BigEndian.PutUint16(request[10:12], 0x0001) // Quantity
 
+	slog.Debug("Sending Modbus request", "register", reg, "payload", hex.EncodeToString(request))
+
 	// Write with context support
 	_, err := s.dtlsConn.Write(request)
 	if err != nil {
@@ -169,12 +180,15 @@ func (s *service) readModbusRegister(ctx context.Context, reg uint16) (uint16, e
 		return 0, fmt.Errorf("modbus read error: %w", err)
 	}
 
+	responseBytes := respBuf[:n]
+	slog.Debug("Received Modbus response", "payload", hex.EncodeToString(responseBytes))
+
 	if n < 9 {
 		return 0, fmt.Errorf("modbus response too short: %d bytes", n)
 	}
 
 	// Validate Function Code (should be 0x03 or 0x83 for error)
-	funcCode := respBuf[7]
+	funcCode := responseBytes[7]
 	if funcCode&0x80 != 0 {
 		return 0, fmt.Errorf("modbus error response: code 0x%02X", funcCode)
 	}
@@ -184,12 +198,13 @@ func (s *service) readModbusRegister(ctx context.Context, reg uint16) (uint16, e
 		return 0, fmt.Errorf("incomplete modbus data")
 	}
 
-	val := binary.BigEndian.Uint16(respBuf[9:11])
+	val := binary.BigEndian.Uint16(responseBytes[9:11])
 	return val, nil
 }
 
 func (s *service) close() error {
 	if s.dtlsConn != nil {
+		slog.Debug("Closing DTLS connection")
 		return s.dtlsConn.Close()
 	}
 	return nil
