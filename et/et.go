@@ -9,9 +9,9 @@ import (
 
 // ETInverter implements the goodwe.Inverter interface for the ET line.
 type ETInverter struct {
-	ip          string
-	serial      string
-	service     *service
+	ip      string
+	serial  string
+	service *service
 }
 
 // New creates a new ETInverter instance.
@@ -54,8 +54,6 @@ func (e *ETInverter) Close() error {
 
 // GetInfo retrieves the inverter information.
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
-	// Since we don't have a specific "GetInfo" register in our minimal registry,
-	// we'll use the serial number from the probe.
 	return &goodwe.Info{
 		SerialNumber: e.serial,
 		Model:        "ET-Series",
@@ -63,26 +61,22 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	}, nil
 }
 
-// GetSensors retrieves the sensor values from the registry.
+// GetSensors retrieves the sensor values from the registry via a single bulk request.
 func (e *ETInverter) GetSensors(ctx context.Context) (map[string]float64, error) {
+	// Perform a single bulk request to get all telemetry in one go.
+	// Based on user feedback, target register 35100 with a quantity of 125.
+	data, err := e.service.readModbusBulk(ctx, 35100, 125)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
+	}
+
 	results := make(map[string]float64)
 
 	for name, def := range registry {
-		// Check for context cancellation before each request
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		// Check if the offset is within the bounds of the returned data
+		if def.Offset >= 0 && def.Offset < len(data) {
+			results[name] = float64(data[def.Offset]) * def.Scale
 		}
-
-		val, err := e.service.readModbusRegister(ctx, def.Register)
-		if err != nil {
-			// For a minimal implementation, we might want to log the error and continue
-			// rather than failing the whole batch, but for now we return error.
-			return nil, fmt.Errorf("failed to read sensor %s: %w", name, err)
-		}
-
-		results[name] = float64(val) * def.Scale
 	}
 
 	return results, nil

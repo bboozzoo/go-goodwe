@@ -71,10 +71,7 @@ func (s *service) probe(ctx context.Context) (*probeResult, error) {
 }
 
 // parseProbeResponse extracts serial and DTLS port from the string.
-// Expected format example: "dongle@sn,dtls_port:8899,9012KEUB258L0189"
 func (s *service) parseProbeResponse(resp string) (*probeResult, error) {
-	// This regex is a bit loose to account for variations in the example string
-	// Looking for: dtls_port:(\d+), and then the serial number part.
 	re := regexp.MustCompile(`dtls_port:(\d+),`)
 	matches := re.FindStringSubmatch(resp)
 	if len(matches) < 2 {
@@ -86,17 +83,10 @@ func (s *service) parseProbeResponse(resp string) (*probeResult, error) {
 		return nil, fmt.Errorf("invalid dtls_port: %w", err)
 	}
 
-	// Attempt to extract serial number. In the example: "KEUB258L0189"
-	// The example shows "dongle@sn,dtls_port:8899,9012KEUB258L0189"
-	// Let's try to grab the last part.
 	parts := strings.Split(resp, ",")
 	serial := ""
 	if len(parts) > 0 {
-		// In the example, the serial seems to be part of the last segment or after some noise.
-		// This is brittle, but follows the provided pattern.
 		lastPart := parts[len(parts)-1]
-		// If it contains the "9012" prefix from the example, we might need to strip it.
-		// For now, let's just take the last 12 characters as a heuristic for serials.
 		if len(lastPart) >= 12 {
 			serial = lastPart[len(lastPart)-12:]
 		} else {
@@ -115,25 +105,19 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 	addr := fmt.Sprintf("%s:%d", s.ip, port)
 	slog.Debug("Attempting DTLS connection", "address", addr)
 
-	// DTLS config - In a real scenario, we might need to handle certificates.
-	// For GoodWe, it often uses a specific or no-verification setup depending on the model.
-	// We'll use a standard config for now.
 	config := &dtls.Config{
 		CipherSuites: []dtls.CipherSuiteID{
 			dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 			dtls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		},
-		// In many IoT cases, we might need InsecureSkipVerify if they use self-signed certs.
 		InsecureSkipVerify: true,
 	}
 
-	// Resolve UDP address for DTLS dial
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to resolve UDP address: %w", err)
 	}
 
-	// Call dtls.Dial with 3 arguments: network, addr, config
 	conn, err := dtls.Dial("udp", udpAddr, config)
 	if err != nil {
 		return fmt.Errorf("dtls dial failed: %w", err)
@@ -145,61 +129,84 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 	return nil
 }
 
-// readModbusRegister performs a single Modbus register read over the DTLS connection.
-func (s *service) readModbusRegister(ctx context.Context, reg uint16) (uint16, error) {
+// calculateCRC16 calculates the Modbus CRC16 checksum.
+func calculateCRC16(data []byte) uint16 {
+	var crc uint16 = 0xFFFF
+	for _, b := range data {
+		crc ^= uint16(b)
+		for i := 0; i < 8; i++ {
+			if crc&0x0001 != 0 {
+				crc = (crc >> 1) ^ 0xA001
+			} else {
+				crc >>= 1
+			}
+		}
+	}
+	return crc
+}
+
+// readModbusBulk performs a single Modbus bulk register read over the DTLS connection using RTU framing.
+func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity uint16) ([]uint16, error) {
 	if s.dtlsConn == nil {
-		return 0, errors.New("no DTLS connection established")
+		return nil, errors.New("no DTLS connection established")
 	}
 
-	// Modbus TCP-style ADU over DTLS:
-	// Transaction ID (2), Protocol ID (2), Length (2), Unit ID (1), Function Code (1), Register (2), Count (2)
-	// We'll use a simplified version for the example.
-	request := make([]byte, 12)
-	binary.BigEndian.PutUint16(request[0:2], 0x0001) // Transaction ID
-	binary.BigEndian.PutUint16(request[2:4], 0x0000) // Protocol ID
-	binary.BigEndian.PutUint16(request[4:6], 0x0006) // Length
-	request[6] = 0x01                               // Unit ID
-	request[7] = 0x03                               // Function Code (Read Holding Registers)
-	binary.BigEndian.PutUint16(request[8:10], reg)  // Register Address
-	binary.BigEndian.PutUint16(request[10:12], 0x0001) // Quantity
+	// Modbus RTU over DTLS:
+	// Slave ID (1) | Function Code (1) | Register Address (2) | Quantity (2) | CRC (2)
+	request := make([]byte, 8)
+	request[0] = 0xF7                               // Slave ID 247
+	request[1] = 0x03                               // Function Code (Read Holding Registers)
+	binary.BigEndian.PutUint16(request[2:4], startReg)
+	binary.BigEndian.PutUint16(request[4:6], quantity)
 
-	slog.Debug("Sending Modbus request", "register", reg, "payload", hex.EncodeToString(request))
+	crc := calculateCRC16(request[0:6])
+	binary.LittleEndian.PutUint16(request[6:8], crc)
 
-	// Write with context support
+	slog.Debug("Sending Modbus RTU bulk request", "start", startReg, "qty", quantity, "payload", hex.EncodeToString(request))
+
 	_, err := s.dtlsConn.Write(request)
 	if err != nil {
-		return 0, fmt.Errorf("modbus write error: %w", err)
+		return nil, fmt.Errorf("modbus write error: %w", err)
 	}
 
-	// Read response
-	// Expected: Trans(2), Prot(2), Len(2), Unit(1), Func(1), ByteCount(1), Data(N)
-	// For 1 register (2 bytes), total = 2+2+2+1+1+1+2 = 11 bytes
-	respBuf := make([]byte, 256)
+	// Expected RTU: SlaveID(1), Func(1), ByteCount(1), Data(N), CRC(2)
+	respBuf := make([]byte, 4096)
 	n, err := s.dtlsConn.Read(respBuf)
 	if err != nil {
-		return 0, fmt.Errorf("modbus read error: %w", err)
+		return nil, fmt.Errorf("modbus read error: %w", err)
 	}
 
 	responseBytes := respBuf[:n]
-	slog.Debug("Received Modbus response", "payload", hex.EncodeToString(responseBytes))
+	slog.Debug("Received Modbus RTU bulk response", "payload", hex.EncodeToString(responseBytes))
 
-	if n < 9 {
-		return 0, fmt.Errorf("modbus response too short: %d bytes", n)
+	if n < 7 {
+		return nil, fmt.Errorf("modbus response too short: %d bytes", n)
 	}
 
-	// Validate Function Code (should be 0x03 or 0x83 for error)
-	funcCode := responseBytes[7]
+	// Validate CRC
+	expectedCRC := binary.LittleEndian.Uint16(responseBytes[n-2 : n])
+	actualCRC := calculateCRC16(responseBytes[0 : n-2])
+	if expectedCRC != actualCRC {
+		return nil, fmt.Errorf("modbus CRC mismatch: expected %04X, got %04X", expectedCRC, actualCRC)
+	}
+
+	// Validate Function Code
+	funcCode := responseBytes[1]
 	if funcCode&0x80 != 0 {
-		return 0, fmt.Errorf("modbus error response: code 0x%02X", funcCode)
+		return nil, fmt.Errorf("modbus error response: code 0x%02X", funcCode)
 	}
 
-	// Data starts at index 9
-	if n < 11 {
-		return 0, fmt.Errorf("incomplete modbus data")
+	byteCount := int(responseBytes[2])
+	if n < 3+byteCount+2 {
+		return nil, fmt.Errorf("incomplete modbus data: expected %d bytes, got %d", 3+byteCount+2, n)
 	}
 
-	val := binary.BigEndian.Uint16(responseBytes[9:11])
-	return val, nil
+	results := make([]uint16, byteCount/2)
+	for i := 0; i < len(results); i++ {
+		results[i] = binary.BigEndian.Uint16(responseBytes[3+(i*2) : 3+(i*2)+2])
+	}
+
+	return results, nil
 }
 
 func (s *service) close() error {

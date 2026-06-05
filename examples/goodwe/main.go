@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ func main() {
 	ip := flag.String("ip", "", "IP address of the GoodWe inverter")
 	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
 	readSensor := flag.String("readsensor", "", "Name of the specific sensor to read and exit.")
+	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
 	flag.Parse()
 
 	// Setup slog
@@ -29,6 +31,17 @@ func main() {
 		fmt.Println("Error: -ip is required")
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// Handle list sensors request
+	if *listSensors {
+		sensors := et.GetSensorNames()
+		sort.Strings(sensors)
+		fmt.Println("Available sensors:")
+		for _, s := range sensors {
+			fmt.Printf(" - %s\n", s)
+		}
+		os.Exit(0)
 	}
 
 	// Setup context with cancellation on signal
