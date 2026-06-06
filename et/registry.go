@@ -243,6 +243,37 @@ var registry = map[string]sensorDefinition{
 	"timestamp": {Name: "Timestamp", Unit: "", Calculator: timestampReader(0)},
 }
 
+// batteryRegistry contains sensors from the battery info block (register 37000, 24 registers).
+// All register indices are relative to 37000.
+var batteryRegistry = map[string]sensorDefinition{
+	"battery_bms":                 {Name: "Battery BMS", Unit: "", Calculator: uint16Reader(0, 1)},
+	"battery_index":               {Name: "Battery Index", Unit: "", Calculator: uint16Reader(1, 1)},
+	"battery_status":              {Name: "Battery Status", Unit: "", Calculator: uint16Reader(2, 1)},
+	"battery_temperature":         {Name: "Battery Temperature", Unit: "C", Calculator: tempReader(3)},
+	"battery_charge_limit":        {Name: "Battery Charge Limit", Unit: "A", Calculator: uint16Reader(4, 1)},
+	"battery_discharge_limit":     {Name: "Battery Discharge Limit", Unit: "A", Calculator: uint16Reader(5, 1)},
+	"battery_error_l":             {Name: "Battery Error Low", Unit: "", Calculator: uint16Reader(6, 1)},
+	"battery_soc":                 {Name: "Battery State of Charge", Unit: "%", Calculator: uint16Reader(7, 1)},
+	"battery_soh":                 {Name: "Battery State of Health", Unit: "%", Calculator: uint16Reader(8, 1)},
+	"battery_modules":             {Name: "Battery Modules", Unit: "", Calculator: uint16Reader(9, 1)},
+	"battery_warning_l":           {Name: "Battery Warning Low", Unit: "", Calculator: uint16Reader(10, 1)},
+	"battery_protocol":            {Name: "Battery Protocol", Unit: "", Calculator: uint16Reader(11, 1)},
+	"battery_error_h":             {Name: "Battery Error High", Unit: "", Calculator: uint16Reader(12, 1)},
+	"battery_error":               {Name: "Battery Error", Unit: "", Calculator: enumBitmap22Reader(12, 6, bmsAlarmCodes)},
+	"battery_warning_h":           {Name: "Battery Warning High", Unit: "", Calculator: uint16Reader(13, 1)},
+	"battery_warning":             {Name: "Battery Warning", Unit: "", Calculator: enumBitmap22Reader(13, 10, bmsWarningCodes)},
+	"battery_sw_version":          {Name: "Battery Software Version", Unit: "", Calculator: uint16Reader(14, 1)},
+	"battery_hw_version":          {Name: "Battery Hardware Version", Unit: "", Calculator: uint16Reader(15, 1)},
+	"battery_max_cell_temp_id":    {Name: "Battery Max Cell Temperature ID", Unit: "", Calculator: uint16Reader(16, 1)},
+	"battery_min_cell_temp_id":    {Name: "Battery Min Cell Temperature ID", Unit: "", Calculator: uint16Reader(17, 1)},
+	"battery_max_cell_voltage_id": {Name: "Battery Max Cell Voltage ID", Unit: "", Calculator: uint16Reader(18, 1)},
+	"battery_min_cell_voltage_id": {Name: "Battery Min Cell Voltage ID", Unit: "", Calculator: uint16Reader(19, 1)},
+	"battery_max_cell_temp":       {Name: "Battery Max Cell Temperature", Unit: "C", Calculator: tempReader(20)},
+	"battery_min_cell_temp":       {Name: "Battery Min Cell Temperature", Unit: "C", Calculator: tempReader(21)},
+	"battery_max_cell_voltage":    {Name: "Battery Max Cell Voltage", Unit: "V", Calculator: cellVoltageReader(22)},
+	"battery_min_cell_voltage":    {Name: "Battery Min Cell Voltage", Unit: "V", Calculator: cellVoltageReader(23)},
+}
+
 func GetSensorNames() []string {
 	names := make([]string, 0, len(registry))
 	for name := range registry {
@@ -415,27 +446,75 @@ func enumBitmap4Reader(regIdx int, labels map[int]string) func([]byte) any {
 			return ""
 		}
 		v := binary.BigEndian.Uint32(data[offset : offset+4])
-		var parts []string
-		for i := 0; i < 32; i++ {
-			if v&1 == 1 {
-				if s, ok := labels[i]; ok && s != "" {
-					parts = append(parts, s)
-				}
-			}
-			v >>= 1
+		return decodeBitmap(v, labels)
+	}
+}
+
+// tempReader reads a signed 16-bit temperature value scaled by 0.1.
+// Returns 0 for sentinel values (-1 or 32767).
+func tempReader(regIdx int) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return float64(0)
 		}
-		switch len(parts) {
-		case 0:
+		v := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+		if v == -1 || v == 32767 {
+			return float64(0)
+		}
+		return float64(v) / 10.0
+	}
+}
+
+// cellVoltageReader reads an unsigned 16-bit cell voltage value scaled by 0.001.
+func cellVoltageReader(regIdx int) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return float64(0)
+		}
+		return float64(binary.BigEndian.Uint16(data[offset:offset+2])) / 1000.0
+	}
+}
+
+// enumBitmap22Reader reads a 32-bit bitmap spread across two separate registers
+// (hiReg and loReg) and decodes it into a comma-separated string of active labels.
+func enumBitmap22Reader(hiReg int, loReg int, labels map[int]string) func([]byte) any {
+	return func(data []byte) any {
+		hiOff := hiReg * 2
+		loOff := loReg * 2
+		if hiOff+2 > len(data) || loOff+2 > len(data) {
 			return ""
-		case 1:
-			return parts[0]
-		default:
-			result := parts[0]
-			for _, p := range parts[1:] {
-				result += ", " + p
-			}
-			return result
 		}
+		hi := uint32(binary.BigEndian.Uint16(data[hiOff : hiOff+2]))
+		lo := uint32(binary.BigEndian.Uint16(data[loOff : loOff+2]))
+		v := hi<<16 | lo
+		return decodeBitmap(v, labels)
+	}
+}
+
+// decodeBitmap decodes a 32-bit bitmap into a comma-separated string of active labels.
+func decodeBitmap(v uint32, labels map[int]string) string {
+	var parts []string
+	for i := 0; i < 32; i++ {
+		if v&1 == 1 {
+			if s, ok := labels[i]; ok && s != "" {
+				parts = append(parts, s)
+			}
+		}
+		v >>= 1
+	}
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	default:
+		result := parts[0]
+		for _, p := range parts[1:] {
+			result += ", " + p
+		}
+		return result
 	}
 }
 

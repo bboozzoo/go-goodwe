@@ -30,6 +30,8 @@ package et
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/bboozzoo/go-goodwe"
 )
@@ -103,5 +105,33 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
+	// Attempt to read battery info (37000, 24 regs). Skip silently if battery is absent.
+	batteryData, err := e.service.readModbusBulk(ctx, 37000, 24)
+	if err != nil {
+		// ILLEGAL_DATA_ADDRESS (0x02) means no battery connected
+		if !isIllegalDataAddress(err) {
+			slog.Warn("Failed to read battery info", "error", err)
+		}
+	} else {
+		for name, def := range batteryRegistry {
+			select {
+			case <-ctx.Done():
+				return results, ctx.Err()
+			default:
+			}
+
+			results[name] = goodwe.SensorValue{
+				Value: def.Calculator(batteryData),
+				Unit:  def.Unit,
+				Name:  def.Name,
+			}
+		}
+	}
+
 	return results, nil
+}
+
+// isIllegalDataAddress checks if a Modbus error is ILLEGAL_DATA_ADDRESS (0x02).
+func isIllegalDataAddress(err error) bool {
+	return strings.Contains(err.Error(), "exception 0x02")
 }

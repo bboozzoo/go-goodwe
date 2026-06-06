@@ -266,7 +266,3 @@ var bmsWarningCodes = map[int]string{
 	1:  "Discharging under-voltage 1",
 	0:  "Charging over-voltage 1",
 }
-
-// Referenced in Phase 3 (battery block)
-var _ = bmsAlarmCodes
-var _ = bmsWarningCodes

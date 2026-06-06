@@ -475,6 +475,122 @@ func TestLabelSensors_GW20K(t *testing.T) {
 	}
 }
 
+func loadBatteryHex(t *testing.T, name string) []byte {
+	t.Helper()
+	raw := loadSampleHex(t, name)
+	data, err := parseModbusBulkResponse(raw)
+	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
+	require.Len(t, data, 48, "expected 48 bytes (24 registers) for battery")
+	return data
+}
+
+type batteryTest struct {
+	name string
+	want float64
+	unit string
+}
+
+type batteryStringTest struct {
+	name string
+	want string
+}
+
+func testBatteryValues(t *testing.T, data []byte, floatTests []batteryTest, stringTests []batteryStringTest) {
+	t.Helper()
+	for _, tc := range floatTests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := batteryRegistry[tc.name]
+			require.True(t, ok, "battery sensor %q not found", tc.name)
+			sv := def.Calculator(data)
+			f, ok := sv.(float64)
+			require.True(t, ok, "battery sensor %q should return float64, got %T", tc.name, sv)
+			assert.InDelta(t, tc.want, f, 0.01, "%s", tc.name)
+		})
+	}
+	for _, tc := range stringTests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := batteryRegistry[tc.name]
+			require.True(t, ok, "battery sensor %q not found", tc.name)
+			sv := def.Calculator(data)
+			s, ok := sv.(string)
+			require.True(t, ok, "battery sensor %q should return string, got %T", tc.name, sv)
+			assert.Equal(t, tc.want, s, "%s", tc.name)
+		})
+	}
+}
+
+func TestBatterySensors_GW10K(t *testing.T) {
+	data := loadBatteryHex(t, "GW10K-ET_battery_info.hex")
+	testBatteryValues(t, data,
+		[]batteryTest{
+			{"battery_bms", 255, ""},
+			{"battery_index", 256, ""},
+			{"battery_status", 1, ""},
+			{"battery_temperature", 35.0, "C"},
+			{"battery_charge_limit", 25, "A"},
+			{"battery_discharge_limit", 25, "A"},
+			{"battery_error_l", 0, ""},
+			{"battery_soc", 68, "%"},
+			{"battery_soh", 99, "%"},
+			{"battery_modules", 5, ""},
+			{"battery_warning_l", 0, ""},
+			{"battery_protocol", 257, ""},
+			{"battery_error_h", 0, ""},
+			{"battery_warning_h", 0, ""},
+			{"battery_sw_version", 0, ""},
+			{"battery_hw_version", 0, ""},
+			{"battery_max_cell_temp_id", 0, ""},
+			{"battery_min_cell_temp_id", 0, ""},
+			{"battery_max_cell_voltage_id", 0, ""},
+			{"battery_min_cell_voltage_id", 0, ""},
+			{"battery_max_cell_temp", 0, "C"},
+			{"battery_min_cell_temp", 0, "C"},
+			{"battery_max_cell_voltage", 0, "V"},
+			{"battery_min_cell_voltage", 0, "V"},
+		},
+		[]batteryStringTest{
+			{"battery_error", ""},
+			{"battery_warning", ""},
+		},
+	)
+}
+
+func TestBatterySensors_GW20K(t *testing.T) {
+	data := loadBatteryHex(t, "GW20K-ET_battery_info.hex")
+	testBatteryValues(t, data,
+		[]batteryTest{
+			{"battery_bms", 1, ""},
+			{"battery_index", 498, ""},
+			{"battery_status", 1, ""},
+			{"battery_temperature", 14.1, "C"},
+			{"battery_charge_limit", 0, "A"},
+			{"battery_discharge_limit", 30, "A"},
+			{"battery_error_l", 0, ""},
+			{"battery_soc", 100, "%"},
+			{"battery_soh", 100, "%"},
+			{"battery_modules", 7, ""},
+			{"battery_warning_l", 0, ""},
+			{"battery_protocol", 286, ""},
+			{"battery_error_h", 0, ""},
+			{"battery_warning_h", 0, ""},
+			{"battery_sw_version", 2502, ""},
+			{"battery_hw_version", 2752, ""},
+			{"battery_max_cell_temp_id", 0, ""},
+			{"battery_min_cell_temp_id", 0, ""},
+			{"battery_max_cell_voltage_id", 0, ""},
+			{"battery_min_cell_voltage_id", 0, ""},
+			{"battery_max_cell_temp", 14.1, "C"},
+			{"battery_min_cell_temp", 9.0, "C"},
+			{"battery_max_cell_voltage", 4.0, "V"},
+			{"battery_min_cell_voltage", 3.961, "V"},
+		},
+		[]batteryStringTest{
+			{"battery_error", ""},
+			{"battery_warning", ""},
+		},
+	)
+}
+
 // TODO: Remaining sensors from Python reference:
 // - label/enum sensors (pv*_mode_label, grid_mode_label, etc.) — Phase 2
 // - battery info sensors (register 37000, separate bulk read) — Phase 3
