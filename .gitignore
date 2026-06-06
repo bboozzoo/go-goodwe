@@ -1,0 +1,9 @@
+# Go binaries
+/main
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/

@@ -160,6 +160,198 @@ func TestHouseConsumptionComponents_GW20K(t *testing.T) {
 	assert.Equal(t, int16(1556), int16(data[40]), "active_power")
 }
 
+func TestSensorValues_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	run := func(name string) float64 {
+		return registry[name].Calculator(data)
+	}
+
+	actual := []struct {
+		name string
+		want float64
+	}{
+		{"vpv1", 332.6},
+		{"ipv1", 5.1},
+		{"ppv1", 1695},
+		{"vpv2", 332.6},
+		{"ipv2", 5.3},
+		{"ppv2", 1761},
+		{"ppv", 3456},
+		{"vgrid", 239.3},
+		{"igrid", 1.5},
+		{"fgrid", 49.99},
+		{"pgrid", 336},
+		{"vgrid2", 241.5},
+		{"igrid2", 1.3},
+		{"fgrid2", 49.99},
+		{"pgrid2", 287},
+		{"vgrid3", 241.1},
+		{"igrid3", 1.1},
+		{"fgrid3", 49.99},
+		{"pgrid3", 206},
+		{"grid_mode", 1},
+		{"total_inverter_power", 831},
+		{"active_power", -3},
+		{"reactive_power", 0},
+		{"apparent_power", 0},
+		{"backup_v1", 239.0},
+		{"backup_i1", 0.6},
+		{"backup_f1", 49.98},
+		{"load_mode1", 1},
+		{"backup_p1", 107},
+		{"backup_v2", 241.3},
+		{"backup_i2", 0.9},
+		{"backup_f2", 50.0},
+		{"load_mode2", 1},
+		{"backup_p2", 189},
+		{"backup_v3", 241.2},
+		{"backup_i3", 0.2},
+		{"backup_f3", 49.99},
+		{"load_mode3", 1},
+		{"backup_p3", 0},
+		{"load_p1", 224},
+		{"load_p2", 80},
+		{"load_p3", 233},
+		{"backup_ptotal", 312},
+		{"load_ptotal", 522},
+		{"ups_load", 4},
+		{"temperature_air", 51.0},
+		{"temperature_module", 0},
+		{"temperature", 58.7},
+		{"function_bit", 0},
+		{"bus_voltage", 803.6},
+		{"nbus_voltage", 401.8},
+		{"vbattery1", 254.2},
+		{"ibattery1", -9.8},
+		{"pbattery1", -2512},
+		{"battery_mode", 3},
+		{"warning_code", 0},
+		{"safety_country", 32},
+		{"work_mode", 1},
+		{"operation_mode", 0},
+		{"error_codes", 0},
+		{"e_total", 6085.3},
+		{"e_day", 12.5},
+		{"e_total_exp", 4718.6},
+		{"h_total", 9246},
+		{"e_day_exp", 9.8},
+		{"e_total_imp", 58.0},
+		{"e_day_imp", 0},
+		{"e_load_total", 8820.2},
+		{"e_load_day", 11.6},
+		{"e_bat_charge_total", 2758.1},
+		{"e_bat_charge_day", 5.3},
+		{"e_bat_discharge_total", 2442.1},
+		{"e_bat_discharge_day", 2.9},
+		{"diagnose_result", 117442560},
+	}
+	for _, tc := range actual {
+		t.Run(tc.name, func(t *testing.T) {
+			got := run(tc.name)
+			assert.InDelta(t, tc.want, got, 0.01, "%s", tc.name)
+		})
+	}
+}
+
+func TestSensorValues_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+	run := func(name string) float64 {
+		return registry[name].Calculator(data)
+	}
+
+	actual := []struct {
+		name string
+		want float64
+	}{
+		{"vpv1", 644.3},
+		{"ipv1", 1.7},
+		{"ppv1", 1098},
+		{"vpv2", 644.3},
+		{"ipv2", 0},
+		{"ppv2", 997},
+		{"vpv3", 569.3},
+		{"ipv3", 1.8},
+		{"ppv3", 0},
+		{"vpv4", 569.3},
+		{"ipv4", 0},
+		{"ppv4", 0},
+		{"ppv", 2095},
+		{"vgrid", 233.8},
+		{"igrid", 2.9},
+		{"fgrid", 49.99},
+		{"pgrid", 651},
+		{"vgrid2", 233.7},
+		{"igrid2", 3.0},
+		{"fgrid2", 50.0},
+		{"pgrid2", 652},
+		{"vgrid3", 234.7},
+		{"igrid3", 3.0},
+		{"fgrid3", 49.99},
+		{"pgrid3", 663},
+		{"grid_mode", 1},
+		{"total_inverter_power", 1966},
+		{"active_power", 1556},
+		{"reactive_power", 827},
+		{"apparent_power", 2083},
+		{"backup_v1", 233.2},
+		{"backup_i1", 1.7},
+		{"backup_f1", 49.99},
+		{"load_mode1", 0},
+		{"backup_p1", 235},
+		{"backup_v2", 233.7},
+		{"backup_i2", 1.2},
+		{"backup_f2", 50.0},
+		{"load_mode2", 0},
+		{"backup_p2", 140},
+		{"backup_v3", 234.1},
+		{"backup_i3", 0.4},
+		{"backup_f3", 49.99},
+		{"load_mode3", 0},
+		{"backup_p3", 91},
+		{"load_p1", 221},
+		{"load_p2", 125},
+		{"load_p3", 65},
+		{"backup_ptotal", 484},
+		{"load_ptotal", 0},
+		{"ups_load", 4},
+		{"temperature_air", 43.9},
+		{"temperature_module", 0},
+		{"temperature", 42.2},
+		{"function_bit", 1},
+		{"bus_voltage", 762.5},
+		{"nbus_voltage", 381.3},
+		{"vbattery1", 381.6},
+		{"ibattery1", -0.4},
+		{"pbattery1", -153},
+		{"battery_mode", 3},
+		{"warning_code", 0},
+		{"safety_country", 2},
+		{"work_mode", 1},
+		{"operation_mode", 0},
+		{"error_codes", 0},
+		{"e_total", 50.1},
+		{"e_day", 49.9},
+		{"e_total_exp", 331.6},
+		{"h_total", 493},
+		{"e_day_exp", 40.8},
+		{"e_total_imp", 392.0},
+		{"e_day_imp", 0},
+		{"e_load_total", 285.6},
+		{"e_load_day", 0.2},
+		{"e_bat_charge_total", 381.7},
+		{"e_bat_charge_day", 10.4},
+		{"e_bat_discharge_total", 303.6},
+		{"e_bat_discharge_day", 2.8},
+		{"diagnose_result", 318767360},
+	}
+	for _, tc := range actual {
+		t.Run(tc.name, func(t *testing.T) {
+			got := run(tc.name)
+			assert.InDelta(t, tc.want, got, 0.01, "%s", tc.name)
+		})
+	}
+}
+
 // TODO: Implement remaining sensors from Python reference.
 // Expected values from GW10K-ET_running_data.hex (Python test):
 //
