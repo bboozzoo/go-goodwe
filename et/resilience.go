@@ -8,7 +8,7 @@ import (
 // backoff implements a simple exponential backoff.
 func backoff(ctx context.Context, operation func() error) error {
 	const (
-		maxRetries = 3
+		maxRetries  = 3
 		initialWait = 500 * time.Millisecond
 	)
 
