@@ -128,6 +128,32 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
+	// Attempt to read meter data (36000). Try 125 regs, fall back to 58, then 45.
+	meterData, err := e.service.readModbusBulk(ctx, 36000, 125)
+	if err != nil && isIllegalDataAddress(err) {
+		meterData, err = e.service.readModbusBulk(ctx, 36000, 58)
+	}
+	if err != nil && isIllegalDataAddress(err) {
+		meterData, err = e.service.readModbusBulk(ctx, 36000, 45)
+	}
+	if err != nil {
+		slog.Warn("Failed to read meter data", "error", err)
+	} else {
+		for name, def := range meterRegistry {
+			select {
+			case <-ctx.Done():
+				return results, ctx.Err()
+			default:
+			}
+			// Calculator handles bounds checking internally.
+			results[name] = goodwe.SensorValue{
+				Value: def.Calculator(meterData),
+				Unit:  def.Unit,
+				Name:  def.Name,
+			}
+		}
+	}
+
 	return results, nil
 }
 

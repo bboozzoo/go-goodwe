@@ -591,8 +591,138 @@ func TestBatterySensors_GW20K(t *testing.T) {
 	)
 }
 
-// TODO: Remaining sensors from Python reference:
-// - label/enum sensors (pv*_mode_label, grid_mode_label, etc.) — Phase 2
-// - battery info sensors (register 37000, separate bulk read) — Phase 3
-// - meter sensors (register 36000, separate bulk read) — Phase 4
-// - MPPT sensors (register 35301, separate bulk read) — Phase 5
+func loadMeterHex(t *testing.T, name string) []byte {
+	t.Helper()
+	raw := loadSampleHex(t, name)
+	data, err := parseModbusBulkResponse(raw)
+	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
+	return data
+}
+
+type meterFloatTest struct {
+	name string
+	want float64
+}
+
+type meterStringTest struct {
+	name string
+	want string
+}
+
+func testMeterValues(t *testing.T, data []byte, floatTests []meterFloatTest, stringTests []meterStringTest) {
+	t.Helper()
+	for _, tc := range floatTests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := meterRegistry[tc.name]
+			require.True(t, ok, "meter sensor %q not found", tc.name)
+			sv := def.Calculator(data)
+			f, ok := sv.(float64)
+			require.True(t, ok, "meter sensor %q should return float64, got %T", tc.name, sv)
+			assert.InDelta(t, tc.want, f, 0.01, "%s", tc.name)
+		})
+	}
+	for _, tc := range stringTests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := meterRegistry[tc.name]
+			require.True(t, ok, "meter sensor %q not found", tc.name)
+			sv := def.Calculator(data)
+			s, ok := sv.(string)
+			require.True(t, ok, "meter sensor %q should return string, got %T", tc.name, sv)
+			assert.Equal(t, tc.want, s, "%s", tc.name)
+		})
+	}
+}
+
+func TestMeterSensors_GW10K(t *testing.T) {
+	data := loadMeterHex(t, "GW10K-ET_meter_data.hex")
+	testMeterValues(t, data,
+		[]meterFloatTest{
+			{"commode", 1},
+			{"rssi", 35},
+			{"meter_test_status", 0},
+			{"meter_comm_status", 1},
+			{"active_power1", -57},
+			{"active_power2", -46},
+			{"active_power3", -6},
+			{"active_power_total", -110},
+			{"reactive_power_total", 1336},
+			{"meter_power_factor1", -0.145},
+			{"meter_power_factor2", -0.124},
+			{"meter_power_factor3", -0.014},
+			{"meter_power_factor", -0.08},
+			{"meter_freq", 50.05},
+			{"meter_e_total_exp", 10.514},
+			{"meter_e_total_imp", 3254.462},
+			{"meter_active_power1", -57},
+			{"meter_active_power2", -46},
+			{"meter_active_power3", -6},
+			{"meter_active_power_total", -110},
+			{"meter_reactive_power1", 364},
+			{"meter_reactive_power2", 357},
+			{"meter_reactive_power3", 614},
+			{"meter_reactive_power_total", 1336},
+			{"meter_apparent_power1", -402},
+			{"meter_apparent_power2", -372},
+			{"meter_apparent_power3", -627},
+			{"meter_apparent_power_total", -1403},
+			{"meter_type", 1},
+			{"meter_sw_version", 3},
+		},
+		nil,
+	)
+}
+
+func TestMeterSensors_GW20K(t *testing.T) {
+	data := loadMeterHex(t, "GW20K-ET_meter_data.hex")
+	testMeterValues(t, data,
+		[]meterFloatTest{
+			{"commode", 7},
+			{"rssi", 0},
+			{"meter_test_status", 273},
+			{"meter_comm_status", 1},
+			{"active_power1", 430},
+			{"active_power2", 527},
+			{"active_power3", 598},
+			{"active_power_total", 1556},
+			{"reactive_power_total", 82},
+			{"meter_power_factor1", 0.084},
+			{"meter_power_factor2", 0.09},
+			{"meter_power_factor3", 0.091},
+			{"meter_power_factor", 0.089},
+			{"meter_freq", 50.0},
+			{"meter_active_power1", 430},
+			{"meter_active_power2", 527},
+			{"meter_active_power3", 598},
+			{"meter_active_power_total", 1556},
+			{"meter_reactive_power1", 102},
+			{"meter_reactive_power2", 19},
+			{"meter_reactive_power3", -39},
+			{"meter_reactive_power_total", 82},
+			{"meter_apparent_power1", 506},
+			{"meter_apparent_power2", 581},
+			{"meter_apparent_power3", 652},
+			{"meter_apparent_power_total", 1740},
+			{"meter_type", 2},
+			{"meter_sw_version", 5},
+			{"meter2_active_power", 0},
+			{"meter2_e_total_exp", 0.0},
+			{"meter2_e_total_imp", 0.0},
+			{"meter2_comm_status", 0},
+			{"meter_voltage1", 233.8},
+			{"meter_voltage2", 233.9},
+			{"meter_voltage3", 233.7},
+			{"meter_current1", 2.1},
+			{"meter_current2", 2.4},
+			{"meter_current3", 2.8},
+			{"meter_e_total_exp1", 10.72},
+			{"meter_e_total_exp2", 12.61},
+			{"meter_e_total_exp3", 13.9},
+			{"meter_e_total_exp_8", 35.55},
+			{"meter_e_total_imp1", 1.33},
+			{"meter_e_total_imp2", 0.49},
+			{"meter_e_total_imp3", 0.02},
+			{"meter_e_total_imp_8", 0.15},
+		},
+		nil,
+	)
+}

@@ -29,12 +29,14 @@ package et
 
 import (
 	"encoding/binary"
+	"math"
 	"time"
 )
 
 const (
 	undef16 uint16 = 0xFFFF
 	undef32 uint32 = 0xFFFFFFFF
+	undef64 uint64 = 0xFFFFFFFFFFFFFFFF
 )
 
 type sensorDefinition struct {
@@ -272,6 +274,65 @@ var batteryRegistry = map[string]sensorDefinition{
 	"battery_min_cell_temp":       {Name: "Battery Min Cell Temperature", Unit: "C", Calculator: tempReader(21)},
 	"battery_max_cell_voltage":    {Name: "Battery Max Cell Voltage", Unit: "V", Calculator: cellVoltageReader(22)},
 	"battery_min_cell_voltage":    {Name: "Battery Min Cell Voltage", Unit: "V", Calculator: cellVoltageReader(23)},
+}
+
+// meterRegistry contains sensors from the meter block (register 36000).
+// Register indices are relative to 36000. Sensor availability depends on
+// how many registers were successfully read (45, 58, or 125).
+var meterRegistry = map[string]sensorDefinition{
+	"commode":                    {Name: "Commode", Unit: "", Calculator: uint16Reader(0, 1)},
+	"rssi":                       {Name: "RSSI", Unit: "", Calculator: uint16Reader(1, 1)},
+	"manufacture_code":           {Name: "Manufacture Code", Unit: "", Calculator: uint16Reader(2, 1)},
+	"meter_test_status":          {Name: "Meter Test Status", Unit: "", Calculator: uint16Reader(3, 1)},
+	"meter_comm_status":          {Name: "Meter Communication Status", Unit: "", Calculator: uint16Reader(4, 1)},
+	"active_power1":              {Name: "Active Power L1", Unit: "W", Calculator: int16Reader(5, 1)},
+	"active_power2":              {Name: "Active Power L2", Unit: "W", Calculator: int16Reader(6, 1)},
+	"active_power3":              {Name: "Active Power L3", Unit: "W", Calculator: int16Reader(7, 1)},
+	"active_power_total":         {Name: "Active Power Total", Unit: "W", Calculator: int16Reader(8, 1)},
+	"reactive_power_total":       {Name: "Reactive Power Total", Unit: "var", Calculator: int16Reader(9, 1)},
+	"meter_power_factor1":        {Name: "Meter Power Factor L1", Unit: "", Calculator: decimalReader(10, 1000)},
+	"meter_power_factor2":        {Name: "Meter Power Factor L2", Unit: "", Calculator: decimalReader(11, 1000)},
+	"meter_power_factor3":        {Name: "Meter Power Factor L3", Unit: "", Calculator: decimalReader(12, 1000)},
+	"meter_power_factor":         {Name: "Meter Power Factor", Unit: "", Calculator: decimalReader(13, 1000)},
+	"meter_freq":                 {Name: "Meter Frequency", Unit: "Hz", Calculator: int16Reader(14, 0.01)},
+	"meter_e_total_exp":          {Name: "Meter Total Energy (export)", Unit: "kWh", Calculator: floatReader(15, 1000)},
+	"meter_e_total_imp":          {Name: "Meter Total Energy (import)", Unit: "kWh", Calculator: floatReader(17, 1000)},
+	"meter_active_power1":        {Name: "Meter Active Power L1", Unit: "W", Calculator: int32Reader(19)},
+	"meter_active_power2":        {Name: "Meter Active Power L2", Unit: "W", Calculator: int32Reader(21)},
+	"meter_active_power3":        {Name: "Meter Active Power L3", Unit: "W", Calculator: int32Reader(23)},
+	"meter_active_power_total":   {Name: "Meter Active Power Total", Unit: "W", Calculator: int32Reader(25)},
+	"meter_reactive_power1":      {Name: "Meter Reactive Power L1", Unit: "var", Calculator: int32Reader(27)},
+	"meter_reactive_power2":      {Name: "Meter Reactive Power L2", Unit: "var", Calculator: int32Reader(29)},
+	"meter_reactive_power3":      {Name: "Meter Reactive Power L3", Unit: "var", Calculator: int32Reader(31)},
+	"meter_reactive_power_total": {Name: "Meter Reactive Power Total", Unit: "var", Calculator: int32Reader(33)},
+	"meter_apparent_power1":      {Name: "Meter Apparent Power L1", Unit: "VA", Calculator: int32Reader(35)},
+	"meter_apparent_power2":      {Name: "Meter Apparent Power L2", Unit: "VA", Calculator: int32Reader(37)},
+	"meter_apparent_power3":      {Name: "Meter Apparent Power L3", Unit: "VA", Calculator: int32Reader(39)},
+	"meter_apparent_power_total": {Name: "Meter Apparent Power Total", Unit: "VA", Calculator: int32Reader(41)},
+	"meter_type":                 {Name: "Meter Type", Unit: "", Calculator: uint16Reader(43, 1)},
+	"meter_sw_version":           {Name: "Meter Software Version", Unit: "", Calculator: uint16Reader(44, 1)},
+
+	// Extended sensors (reg index 45-57)
+	"meter2_active_power": {Name: "Meter 2 Active Power", Unit: "W", Calculator: int32Reader(45)},
+	"meter2_e_total_exp":  {Name: "Meter 2 Total Energy (export)", Unit: "kWh", Calculator: floatReader(47, 1000)},
+	"meter2_e_total_imp":  {Name: "Meter 2 Total Energy (import)", Unit: "kWh", Calculator: floatReader(49, 1000)},
+	"meter2_comm_status":  {Name: "Meter 2 Communication Status", Unit: "", Calculator: uint16Reader(51, 1)},
+	"meter_voltage1":      {Name: "Meter L1 Voltage", Unit: "V", Calculator: uint16Reader(52, 0.1)},
+	"meter_voltage2":      {Name: "Meter L2 Voltage", Unit: "V", Calculator: uint16Reader(53, 0.1)},
+	"meter_voltage3":      {Name: "Meter L3 Voltage", Unit: "V", Calculator: uint16Reader(54, 0.1)},
+	"meter_current1":      {Name: "Meter L1 Current", Unit: "A", Calculator: uint16Reader(55, 0.1)},
+	"meter_current2":      {Name: "Meter L2 Current", Unit: "A", Calculator: uint16Reader(56, 0.1)},
+	"meter_current3":      {Name: "Meter L3 Current", Unit: "A", Calculator: uint16Reader(57, 0.1)},
+
+	// Extended2 sensors (reg index 92+, 8-byte energy totals)
+	"meter_e_total_exp1":  {Name: "Meter Total Energy (export) L1", Unit: "kWh", Calculator: energy8Reader(92)},
+	"meter_e_total_exp2":  {Name: "Meter Total Energy (export) L2", Unit: "kWh", Calculator: energy8Reader(96)},
+	"meter_e_total_exp3":  {Name: "Meter Total Energy (export) L3", Unit: "kWh", Calculator: energy8Reader(100)},
+	"meter_e_total_exp_8": {Name: "Meter Total Energy (export)", Unit: "kWh", Calculator: energy8Reader(104)},
+	"meter_e_total_imp1":  {Name: "Meter Total Energy (import) L1", Unit: "kWh", Calculator: energy8Reader(108)},
+	"meter_e_total_imp2":  {Name: "Meter Total Energy (import) L2", Unit: "kWh", Calculator: energy8Reader(112)},
+	"meter_e_total_imp3":  {Name: "Meter Total Energy (import) L3", Unit: "kWh", Calculator: energy8Reader(116)},
+	"meter_e_total_imp_8": {Name: "Meter Total Energy (import)", Unit: "kWh", Calculator: energy8Reader(120)},
 }
 
 func GetSensorNames() []string {
@@ -525,4 +586,41 @@ func readUint32(data []byte, regIdx int) uint32 {
 		return 0
 	}
 	return binary.BigEndian.Uint32(data[offset : offset+4])
+}
+
+// decimalReader reads a signed 16-bit integer and divides by scale.
+func decimalReader(regIdx int, scale float64) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return float64(0)
+		}
+		return float64(int16(binary.BigEndian.Uint16(data[offset:offset+2]))) / scale
+	}
+}
+
+// floatReader reads a 4-byte IEEE 754 big-endian float and divides by scale.
+func floatReader(regIdx int, scale float64) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+4 > len(data) {
+			return float64(0)
+		}
+		return float64(math.Float32frombits(binary.BigEndian.Uint32(data[offset:offset+4]))) / scale
+	}
+}
+
+// energy8Reader reads 8 bytes (4 registers) as a uint64 and divides by 100.
+func energy8Reader(regIdx int) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+8 > len(data) {
+			return float64(0)
+		}
+		v := binary.BigEndian.Uint64(data[offset : offset+8])
+		if v == undef64 {
+			return float64(0)
+		}
+		return float64(v) / 100.0
+	}
 }
