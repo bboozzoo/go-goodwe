@@ -83,7 +83,11 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]float64, error)
 		if def.Calculator != nil {
 			results[name] = def.Calculator(data)
 		} else if def.Offset >= 0 && def.Offset < len(data) {
-			results[name] = float64(data[def.Offset]) * def.Scale
+			raw := data[def.Offset]
+			if raw == undef16 {
+				continue
+			}
+			results[name] = float64(raw) * def.Scale
 		}
 	}
 

@@ -180,13 +180,20 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 	responseBytes := respBuf[:n]
 	slog.Debug("Received Modbus RTU bulk response", "payload", hex.EncodeToString(responseBytes))
 
+	return parseModbusBulkResponse(responseBytes)
+}
+
+// parseModbusBulkResponse parses a raw Modbus RTU response (with aa55 pre-header)
+// and returns the register values as a []uint16.
+func parseModbusBulkResponse(responseBytes []byte) ([]uint16, error) {
+	n := len(responseBytes)
 	if n < 7 {
 		return nil, fmt.Errorf("modbus response too short: %d bytes", n)
 	}
 
 	// Validate CRC
 	expectedCRC := binary.LittleEndian.Uint16(responseBytes[n-2 : n])
-	// The expectec CRC does not includ the fixed 0xaa 0x55 header
+	// The expected CRC does not include the fixed 0xaa 0x55 header
 	actualCRC := calculateCRC16(responseBytes[2 : n-2])
 	if expectedCRC != actualCRC {
 		return nil, fmt.Errorf("modbus CRC mismatch: expected %04X, got %04X", expectedCRC, actualCRC)
