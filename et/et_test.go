@@ -120,6 +120,14 @@ func sensorFloat(t *testing.T, data []byte, name string) float64 {
 	return f
 }
 
+func sensorString(t *testing.T, data []byte, name string) string {
+	t.Helper()
+	sv := registry[name].Calculator(data)
+	s, ok := sv.(string)
+	require.True(t, ok, "sensor %q should return string, got %T", name, sv)
+	return s
+}
+
 func houseConsumptionValue(t *testing.T, data []byte) float64 {
 	t.Helper()
 	return sensorFloat(t, data, "house_consumption")
@@ -417,6 +425,54 @@ func TestGridInOut_GW10K(t *testing.T) {
 func TestGridInOut_GW20K(t *testing.T) {
 	data := parseSampleData(t, "GW20K-ET_running_data.hex")
 	assert.Equal(t, float64(1), sensorFloat(t, data, "grid_in_out"))
+}
+
+func TestLabelSensors_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"pv1_mode_label", "PV panels connected, producing power"},
+		{"pv2_mode_label", "PV panels connected, producing power"},
+		{"grid_mode_label", "Connected to grid"},
+		{"grid_in_out_label", "Idle"},
+		{"battery_mode_label", "Charge"},
+		{"safety_country_label", "50Hz 230Vac Default"},
+		{"work_mode_label", "Normal (On-Grid)"},
+		{"errors", ""},
+		{"diagnose_result_label", "Self-use load light, Export power limit set, PF value set, Real power limit set"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sensorString(t, data, tc.name))
+		})
+	}
+}
+
+func TestLabelSensors_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"pv1_mode_label", "PV panels connected, producing power"},
+		{"pv2_mode_label", "PV panels connected, producing power"},
+		{"pv3_mode_label", "PV panels not connected"},
+		{"pv4_mode_label", "PV panels not connected"},
+		{"grid_mode_label", "Connected to grid"},
+		{"grid_in_out_label", "Exporting"},
+		{"battery_mode_label", "Charge"},
+		{"safety_country_label", "DE LV with PV"},
+		{"work_mode_label", "Normal (On-Grid)"},
+		{"errors", ""},
+		{"diagnose_result_label", "APP: Discharge current too low, Export power limit set, PF value set, SOC protect off"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sensorString(t, data, tc.name))
+		})
+	}
 }
 
 // TODO: Remaining sensors from Python reference:

@@ -58,6 +58,18 @@ var registry = map[string]sensorDefinition{
 	"ipv4": {Name: "PV4 Current", Unit: "A", Calculator: uint16Reader(16, 0.1)},
 	"ppv4": {Name: "PV4 Power", Unit: "W", Calculator: uint32Reader(17)},
 
+	// PV mode codes (byte-level encoding)
+	"pv4_mode": {Name: "PV4 Mode Code", Unit: "", Calculator: highByteReader(19)},
+	"pv3_mode": {Name: "PV3 Mode Code", Unit: "", Calculator: lowByteReader(19)},
+	"pv2_mode": {Name: "PV2 Mode Code", Unit: "", Calculator: highByteReader(20)},
+	"pv1_mode": {Name: "PV1 Mode Code", Unit: "", Calculator: lowByteReader(20)},
+
+	// PV mode labels
+	"pv4_mode_label": {Name: "PV4 Mode", Unit: "", Calculator: enumHReader(19, pvModes)},
+	"pv3_mode_label": {Name: "PV3 Mode", Unit: "", Calculator: enumLReader(19, pvModes)},
+	"pv2_mode_label": {Name: "PV2 Mode", Unit: "", Calculator: enumHReader(20, pvModes)},
+	"pv1_mode_label": {Name: "PV1 Mode", Unit: "", Calculator: enumLReader(20, pvModes)},
+
 	// Grid (L1-L3)
 	"vgrid":                {Name: "Grid L1 Voltage", Unit: "V", Calculator: uint16Reader(21, 0.1)},
 	"igrid":                {Name: "Grid L1 Current", Unit: "A", Calculator: uint16Reader(22, 0.1)},
@@ -72,10 +84,45 @@ var registry = map[string]sensorDefinition{
 	"fgrid3":               {Name: "Grid L3 Frequency", Unit: "Hz", Calculator: int16Reader(33, 0.01)},
 	"pgrid3":               {Name: "Grid L3 Power", Unit: "W", Calculator: int16Reader(35, 1)},
 	"grid_mode":            {Name: "Grid Mode Code", Unit: "", Calculator: uint16Reader(36, 1)},
+	"grid_mode_label":      {Name: "Grid Mode", Unit: "", Calculator: enum2Reader(36, gridModes)},
 	"total_inverter_power": {Name: "Total Inverter Power", Unit: "W", Calculator: int16Reader(38, 1)},
 	"active_power":         {Name: "Active Power", Unit: "W", Calculator: int16Reader(40, 1)},
 	"reactive_power":       {Name: "Reactive Power", Unit: "var", Calculator: int16Reader(42, 1)},
 	"apparent_power":       {Name: "Apparent Power", Unit: "VA", Calculator: int16Reader(44, 1)},
+
+	// Grid in/out (calculated from active_power)
+	"grid_in_out": {
+		Name: "Grid In/Out Code",
+		Unit: "",
+		Calculator: func(data []byte) any {
+			v := int16(binary.BigEndian.Uint16(data[80:82]))
+			if v < -90 {
+				return float64(2)
+			}
+			if v >= 90 {
+				return float64(1)
+			}
+			return float64(0)
+		},
+	},
+	"grid_in_out_label": {
+		Name: "Grid In/Out",
+		Unit: "",
+		Calculator: func(data []byte) any {
+			v := int16(binary.BigEndian.Uint16(data[80:82]))
+			var mode int
+			if v < -90 {
+				mode = 2
+			} else if v >= 90 {
+				mode = 1
+			}
+			s, ok := gridInOutModes[mode]
+			if !ok {
+				return ""
+			}
+			return s
+		},
+	},
 
 	// Backup/UPS
 	"backup_v1":     {Name: "Backup L1 Voltage", Unit: "V", Calculator: uint16Reader(45, 0.1)},
@@ -111,15 +158,19 @@ var registry = map[string]sensorDefinition{
 	"nbus_voltage": {Name: "Negative Bus Voltage", Unit: "V", Calculator: uint16Reader(79, 0.1)},
 
 	// Battery (primary telemetry block)
-	"vbattery1":      {Name: "Battery Voltage", Unit: "V", Calculator: uint16Reader(80, 0.1)},
-	"ibattery1":      {Name: "Battery Current", Unit: "A", Calculator: int16Reader(81, 0.1)},
-	"pbattery1":      {Name: "Battery Power", Unit: "W", Calculator: int32Reader(82)},
-	"battery_mode":   {Name: "Battery Mode Code", Unit: "", Calculator: uint16Reader(84, 1)},
-	"warning_code":   {Name: "Warning Code", Unit: "", Calculator: uint16Reader(85, 1)},
-	"safety_country": {Name: "Safety Country Code", Unit: "", Calculator: uint16Reader(86, 1)},
-	"work_mode":      {Name: "Work Mode Code", Unit: "", Calculator: uint16Reader(87, 1)},
-	"operation_mode": {Name: "Operation Mode", Unit: "", Calculator: uint16Reader(88, 1)},
-	"error_codes":    {Name: "Error Codes", Unit: "", Calculator: uint32Reader(89)},
+	"vbattery1":            {Name: "Battery Voltage", Unit: "V", Calculator: uint16Reader(80, 0.1)},
+	"ibattery1":            {Name: "Battery Current", Unit: "A", Calculator: int16Reader(81, 0.1)},
+	"pbattery1":            {Name: "Battery Power", Unit: "W", Calculator: int32Reader(82)},
+	"battery_mode":         {Name: "Battery Mode Code", Unit: "", Calculator: uint16Reader(84, 1)},
+	"battery_mode_label":   {Name: "Battery Mode", Unit: "", Calculator: enum2Reader(84, batteryModes)},
+	"warning_code":         {Name: "Warning Code", Unit: "", Calculator: uint16Reader(85, 1)},
+	"safety_country":       {Name: "Safety Country Code", Unit: "", Calculator: uint16Reader(86, 1)},
+	"safety_country_label": {Name: "Safety Country", Unit: "", Calculator: enum2Reader(86, safetyCountries)},
+	"work_mode":            {Name: "Work Mode Code", Unit: "", Calculator: uint16Reader(87, 1)},
+	"work_mode_label":      {Name: "Work Mode", Unit: "", Calculator: enum2Reader(87, workModesET)},
+	"operation_mode":       {Name: "Operation Mode", Unit: "", Calculator: uint16Reader(88, 1)},
+	"error_codes":          {Name: "Error Codes", Unit: "", Calculator: uint32Reader(89)},
+	"errors":               {Name: "Errors", Unit: "", Calculator: enumBitmap4Reader(89, errorCodes)},
 
 	// Energy totals
 	"e_total":               {Name: "Total Energy Produced", Unit: "kWh", Calculator: energy4Reader(91)},
@@ -136,6 +187,7 @@ var registry = map[string]sensorDefinition{
 	"e_bat_discharge_total": {Name: "Total Battery Discharge Energy", Unit: "kWh", Calculator: energy4Reader(109)},
 	"e_bat_discharge_day":   {Name: "Daily Battery Discharge Energy", Unit: "kWh", Calculator: energy2Reader(111)},
 	"diagnose_result":       {Name: "Diagnose Result", Unit: "", Calculator: uint32Reader(120)},
+	"diagnose_result_label": {Name: "Diagnose Result", Unit: "", Calculator: enumBitmap4Reader(120, diagStatusCodes)},
 
 	// Calculated
 	"ppv": {
@@ -189,28 +241,6 @@ var registry = map[string]sensorDefinition{
 
 	// Timestamp (6 bytes across 3 registers at index 0-2)
 	"timestamp": {Name: "Timestamp", Unit: "", Calculator: timestampReader(0)},
-
-	// PV mode codes (byte-level encoding)
-	"pv4_mode": {Name: "PV4 Mode Code", Unit: "", Calculator: highByteReader(19)},
-	"pv3_mode": {Name: "PV3 Mode Code", Unit: "", Calculator: lowByteReader(19)},
-	"pv2_mode": {Name: "PV2 Mode Code", Unit: "", Calculator: highByteReader(20)},
-	"pv1_mode": {Name: "PV1 Mode Code", Unit: "", Calculator: lowByteReader(20)},
-
-	// Calculated from active_power
-	"grid_in_out": {
-		Name: "Grid In/Out",
-		Unit: "",
-		Calculator: func(data []byte) any {
-			v := int16(binary.BigEndian.Uint16(data[80:82]))
-			if v < -90 {
-				return float64(2)
-			}
-			if v >= 90 {
-				return float64(1)
-			}
-			return float64(0)
-		},
-	},
 }
 
 func GetSensorNames() []string {
@@ -325,6 +355,87 @@ func lowByteReader(regIdx int) func([]byte) any {
 			return float64(0)
 		}
 		return float64(int8(data[offset+1]))
+	}
+}
+
+// enumHReader reads the high byte of a register and maps it through a label dictionary.
+func enumHReader(regIdx int, labels map[int]string) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return ""
+		}
+		v := int8(data[offset])
+		s, ok := labels[int(v)]
+		if !ok {
+			return ""
+		}
+		return s
+	}
+}
+
+// enumLReader reads the low byte of a register and maps it through a label dictionary.
+func enumLReader(regIdx int, labels map[int]string) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return ""
+		}
+		v := int8(data[offset+1])
+		s, ok := labels[int(v)]
+		if !ok {
+			return ""
+		}
+		return s
+	}
+}
+
+// enum2Reader reads a uint16 register value and maps it through a label dictionary.
+func enum2Reader(regIdx int, labels map[int]string) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+2 > len(data) {
+			return ""
+		}
+		v := int(binary.BigEndian.Uint16(data[offset : offset+2]))
+		s, ok := labels[v]
+		if !ok {
+			return ""
+		}
+		return s
+	}
+}
+
+// enumBitmap4Reader reads 4 bytes (2 registers) as a bitmap and decodes it into
+// a comma-separated string of active labels. Bit position 0 is LSB of the uint32.
+func enumBitmap4Reader(regIdx int, labels map[int]string) func([]byte) any {
+	return func(data []byte) any {
+		offset := regIdx * 2
+		if offset+4 > len(data) {
+			return ""
+		}
+		v := binary.BigEndian.Uint32(data[offset : offset+4])
+		var parts []string
+		for i := 0; i < 32; i++ {
+			if v&1 == 1 {
+				if s, ok := labels[i]; ok && s != "" {
+					parts = append(parts, s)
+				}
+			}
+			v >>= 1
+		}
+		switch len(parts) {
+		case 0:
+			return ""
+		case 1:
+			return parts[0]
+		default:
+			result := parts[0]
+			for _, p := range parts[1:] {
+				result += ", " + p
+			}
+			return result
+		}
 	}
 }
 
