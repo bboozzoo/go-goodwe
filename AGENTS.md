@@ -4,7 +4,12 @@
 - This project is a Go implementation of a GoodWe inverter library.
 - The Python implementation in `python/goodwe/` is the primary reference for protocol logic and implementation details.
 - `examples/cmd/goodwe/main.go` is a functional CLI client with -readsensor, -poll, and -listsensors flags.
-- `GetSensors(ctx)` returns `map[string]any` — numeric sensors are `float64`, `timestamp` is `time.Time`.
+- `GetSensors(ctx)` returns `map[string]SensorValue` where `SensorValue{Value any, Unit string, Name string}`.
+- Four register blocks are read in `GetSensors`:
+  - Main telemetry (35100, 125 regs) → `registry`
+  - Battery info (37000, 24 regs) → `batteryRegistry` (skipped on ILLEGAL_DATA_ADDRESS)
+  - Meter data (36000, 125→58→45 regs fallback) → `meterRegistry` (skipped on error)
+  - MPPT data (35301, 61 regs) → `mpptRegistry` (skipped on ILLEGAL_DATA_ADDRESS)
 
 ## Development Workflow
 - **Code Quality**: 
