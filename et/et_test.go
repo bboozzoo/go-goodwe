@@ -726,3 +726,40 @@ func TestMeterSensors_GW20K(t *testing.T) {
 		nil,
 	)
 }
+
+func loadMpptHex(t *testing.T, name string) []byte {
+	t.Helper()
+	raw := loadSampleHex(t, name)
+	data, err := parseModbusBulkResponse(raw)
+	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
+	return data
+}
+
+func TestMpptSensors_GW20K(t *testing.T) {
+	data := loadMpptHex(t, "GW20K-ET_mppt_data.hex")
+	tests := []struct {
+		name string
+		want float64
+	}{
+		{"ppv_total", 2095},
+		{"pv_channel", 2},
+		{"vpv5", 0},
+		{"ipv5", 0},
+		{"vpv6", 0},
+		{"ipv6", 0},
+		{"vpv7", 0},
+		{"ipv7", 0},
+		{"vpv8", 0},
+		{"ipv8", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := mpptRegistry[tc.name]
+			require.True(t, ok, "mppt sensor %q not found", tc.name)
+			sv := def.Calculator(data)
+			f, ok := sv.(float64)
+			require.True(t, ok, "mppt sensor %q should return float64, got %T", tc.name, sv)
+			assert.InDelta(t, tc.want, f, 0.01, "%s", tc.name)
+		})
+	}
+}

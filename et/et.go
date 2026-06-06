@@ -154,6 +154,27 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
+	// Read MPPT data (35301, 61 regs). Skip silently if unavailable.
+	mpptData, err := e.service.readModbusBulk(ctx, 35301, 61)
+	if err != nil {
+		if !isIllegalDataAddress(err) {
+			slog.Warn("Failed to read MPPT data", "error", err)
+		}
+	} else {
+		for name, def := range mpptRegistry {
+			select {
+			case <-ctx.Done():
+				return results, ctx.Err()
+			default:
+			}
+			results[name] = goodwe.SensorValue{
+				Value: def.Calculator(mpptData),
+				Unit:  def.Unit,
+				Name:  def.Name,
+			}
+		}
+	}
+
 	return results, nil
 }
 

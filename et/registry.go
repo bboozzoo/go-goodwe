@@ -335,6 +335,37 @@ var meterRegistry = map[string]sensorDefinition{
 	"meter_e_total_imp_8": {Name: "Meter Total Energy (import)", Unit: "kWh", Calculator: energy8Reader(120)},
 }
 
+// mpptRegistry contains sensors from the MPPT data block (register 35301, 61 registers).
+// Register indices are relative to 35301.
+var mpptRegistry = map[string]sensorDefinition{
+	"ppv_total":  {Name: "PV Power Total", Unit: "W", Calculator: uint32Reader(0)},
+	"pv_channel": {Name: "PV Channel", Unit: "", Calculator: uint16Reader(2, 1)},
+	"vpv5":       {Name: "PV5 Voltage", Unit: "V", Calculator: uint16Reader(3, 0.1)},
+	"ipv5":       {Name: "PV5 Current", Unit: "A", Calculator: uint16Reader(4, 0.1)},
+	"vpv6":       {Name: "PV6 Voltage", Unit: "V", Calculator: uint16Reader(5, 0.1)},
+	"ipv6":       {Name: "PV6 Current", Unit: "A", Calculator: uint16Reader(6, 0.1)},
+	"vpv7":       {Name: "PV7 Voltage", Unit: "V", Calculator: uint16Reader(7, 0.1)},
+	"ipv7":       {Name: "PV7 Current", Unit: "A", Calculator: uint16Reader(8, 0.1)},
+	"vpv8":       {Name: "PV8 Voltage", Unit: "V", Calculator: uint16Reader(9, 0.1)},
+	"ipv8":       {Name: "PV8 Current", Unit: "A", Calculator: uint16Reader(10, 0.1)},
+	"vpv9":       {Name: "PV9 Voltage", Unit: "V", Calculator: uint16Reader(11, 0.1)},
+	"ipv9":       {Name: "PV9 Current", Unit: "A", Calculator: uint16Reader(12, 0.1)},
+	"vpv10":      {Name: "PV10 Voltage", Unit: "V", Calculator: uint16Reader(13, 0.1)},
+	"ipv10":      {Name: "PV10 Current", Unit: "A", Calculator: uint16Reader(14, 0.1)},
+	"vpv11":      {Name: "PV11 Voltage", Unit: "V", Calculator: uint16Reader(15, 0.1)},
+	"ipv11":      {Name: "PV11 Current", Unit: "A", Calculator: uint16Reader(16, 0.1)},
+	"vpv12":      {Name: "PV12 Voltage", Unit: "V", Calculator: uint16Reader(17, 0.1)},
+	"ipv12":      {Name: "PV12 Current", Unit: "A", Calculator: uint16Reader(18, 0.1)},
+	"vpv13":      {Name: "PV13 Voltage", Unit: "V", Calculator: uint16Reader(19, 0.1)},
+	"ipv13":      {Name: "PV13 Current", Unit: "A", Calculator: uint16Reader(20, 0.1)},
+	"vpv14":      {Name: "PV14 Voltage", Unit: "V", Calculator: uint16Reader(21, 0.1)},
+	"ipv14":      {Name: "PV14 Current", Unit: "A", Calculator: uint16Reader(22, 0.1)},
+	"vpv15":      {Name: "PV15 Voltage", Unit: "V", Calculator: uint16Reader(23, 0.1)},
+	"ipv15":      {Name: "PV15 Current", Unit: "A", Calculator: uint16Reader(24, 0.1)},
+	"vpv16":      {Name: "PV16 Voltage", Unit: "V", Calculator: uint16Reader(25, 0.1)},
+	"ipv16":      {Name: "PV16 Current", Unit: "A", Calculator: uint16Reader(26, 0.1)},
+}
+
 func GetSensorNames() []string {
 	names := make([]string, 0, len(registry))
 	for name := range registry {
