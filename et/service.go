@@ -193,19 +193,20 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 	}
 
 	// Validate Function Code
-	funcCode := responseBytes[1]
+	funcCode := responseBytes[3]
 	if funcCode&0x80 != 0 {
-		return nil, fmt.Errorf("modbus error response: code 0x%02X", funcCode)
+		exceptionCode := responseBytes[4]
+		return nil, fmt.Errorf("modbus error response: function 0x%02X, exception 0x%02X", funcCode, exceptionCode)
 	}
 
-	byteCount := int(responseBytes[2])
-	if n < 3+byteCount+2 {
-		return nil, fmt.Errorf("incomplete modbus data: expected %d bytes, got %d", 3+byteCount+2, n)
+	byteCount := int(responseBytes[4])
+	if n < 5+byteCount+2 {
+		return nil, fmt.Errorf("incomplete modbus data: expected %d bytes, got %d", 5+byteCount+2, n)
 	}
 
 	results := make([]uint16, byteCount/2)
 	for i := 0; i < len(results); i++ {
-		results[i] = binary.BigEndian.Uint16(responseBytes[3+(i*2) : 3+(i*2)+2])
+		results[i] = binary.BigEndian.Uint16(responseBytes[5+(i*2) : 5+(i*2)+2])
 	}
 
 	return results, nil

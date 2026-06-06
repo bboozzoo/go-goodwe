@@ -59,9 +59,24 @@ fractional blocks. You must request predefined bulk blocks (such as the
 telemetry block starting at register 35100).
 
 The AA55 Pre-Header Response: When the inverter responds successfully, the
-decrypted UDP payload usually contains a proprietary framing signature (0xAA
-0x55) prepended to the standard Modbus RTU response block. Your parsing logic
-must find this offset before evaluating the Slave ID and data bytes.
+decrypted UDP payload always contains a proprietary 2-byte framing signature
+(0xAA 0x55) prepended to the standard Modbus RTU response block. The response
+layout is:
+
+| Offset | Size | Field              | Example  |
+|--------|------|--------------------|----------|
+| 0      | 2    | AA55 pre-header    | AA 55    |
+| 2      | 1    | Slave ID           | F7       |
+| 3      | 1    | Function Code      | 03       |
+| 4      | 1    | Byte Count         | FA (250) |
+| 5      | N    | Register Data      | ...      |
+| 5+N    | 2    | CRC16 (Modbus RTU) | ...      |
+
+The CRC16 covers only the Modbus RTU portion (offsets 2 through 5+N-1). The
+AA55 pre-header is NOT included in CRC calculation.
+
+On error, Function Code has bit 7 set (e.g., 0x83) and offset 4 contains the
+Modbus exception code (e.g., 0x02 = ILLEGAL DATA ADDRESS).
 
 Packet Dropping: The low-power embedded Wi-Fi chips on these dongles frequently
 drop packets or hit transient timeouts under load. Your Go network layer should
