@@ -141,6 +141,114 @@ func TestHouseConsumptionComponents_GW10K(t *testing.T) {
 }
 
 // TODO: Implement remaining sensors from Python reference.
+
+// --- GW20K-ET tests ---
+
+func TestParseModbusBulkResponse_GW20K(t *testing.T) {
+	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
+	data, err := parseModbusBulkResponse(raw)
+	if err != nil {
+		t.Fatalf("parseModbusBulkResponse: %v", err)
+	}
+	if len(data) != 125 {
+		t.Fatalf("expected 125 registers, got %d", len(data))
+	}
+	tests := []struct {
+		index int
+		want  uint16
+		name  string
+	}{
+		{0, 0x1A03, "timestamp[0]"},
+		{3, 0x192B, "vpv1 (35103)"},      // 0x192B = 6443 → 644.3V
+		{4, 0x0011, "ipv1 (35104)"},      // 0x11 = 17 → 1.7A
+		{6, 0x044A, "ppv1 high (35106)"}, // 0x044A × 256 = 1098W
+		{7, 0x192B, "vpv2 (35107)"},
+		{10, 0x03E5, "ppv2 high (35110)"}, // 0x03E5 × 256 = 997W
+		{11, 0x163D, "vpv3 (35111)"},      // 0x163D = 5693 → 569.3V
+		{15, 0x163D, "vpv4 (35115)"},
+		{25, 0x028B, "pgrid (35125)"}, // 0x028B = 651W
+		{36, 0x0001, "grid_mode (35136)"},
+	}
+	for _, tt := range tests {
+		if tt.index >= len(data) {
+			t.Errorf("index %d out of range", tt.index)
+			continue
+		}
+		if data[tt.index] != tt.want {
+			t.Errorf("%s (index %d): got 0x%04X, want 0x%04X", tt.name, tt.index, data[tt.index], tt.want)
+		}
+	}
+}
+
+func TestHouseConsumption_GW20K(t *testing.T) {
+	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
+	data, err := parseModbusBulkResponse(raw)
+	if err != nil {
+		t.Fatalf("parseModbusBulkResponse: %v", err)
+	}
+
+	sensor := registry["house_consumption"]
+	got := sensor.Calculator(data)
+
+	// Python reference: house_consumption = 386 W
+	// 1098 + 997 + 0 + 0 + (-153) - 1556 = 386
+	want := 386.0
+	if got != want {
+		t.Errorf("house_consumption: got %.0f, want %.0f", got, want)
+	}
+}
+
+func TestHouseConsumptionComponents_GW20K(t *testing.T) {
+	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
+	data, err := parseModbusBulkResponse(raw)
+	if err != nil {
+		t.Fatalf("parseModbusBulkResponse: %v", err)
+	}
+
+	ppv1 := readUint32(data, 5)
+	if ppv1 == undef32 {
+		ppv1 = 0
+	}
+	if ppv1 != 1098 {
+		t.Errorf("ppv1: got %d, want 1098", ppv1)
+	}
+
+	ppv2 := readUint32(data, 9)
+	if ppv2 == undef32 {
+		ppv2 = 0
+	}
+	if ppv2 != 997 {
+		t.Errorf("ppv2: got %d, want 997", ppv2)
+	}
+
+	ppv3 := readUint32(data, 13)
+	if ppv3 == undef32 {
+		ppv3 = 0
+	}
+	if ppv3 != 0 {
+		t.Errorf("ppv3: got %d, want 0", ppv3)
+	}
+
+	ppv4 := readUint32(data, 17)
+	if ppv4 == undef32 {
+		ppv4 = 0
+	}
+	if ppv4 != 0 {
+		t.Errorf("ppv4: got %d, want 0", ppv4)
+	}
+
+	pbattery1 := int32(readUint32(data, 82))
+	if pbattery1 != -153 {
+		t.Errorf("pbattery1: got %d, want -153", pbattery1)
+	}
+
+	activePower := int16(data[40])
+	if activePower != 1556 {
+		t.Errorf("active_power: got %d, want 1556", activePower)
+	}
+}
+
+// TODO: Implement remaining sensors from Python reference.
 // Expected values from GW10K-ET_running_data.hex (Python test):
 //
 //   vpv1=332.6 ipv1=5.1  ppv1=1695  vpv2=332.6 ipv2=5.3  ppv2=1761  ppv=3456
