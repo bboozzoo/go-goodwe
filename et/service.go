@@ -103,7 +103,11 @@ func (s *service) probe(ctx context.Context) (*probeResult, error) {
 
 // parseProbeResponse extracts serial and DTLS port from the string.
 func (s *service) parseProbeResponse(resp string) (*probeResult, error) {
-	re := regexp.MustCompile(`dtls_port:(\d+),`)
+	if strings.Contains(resp, "@busy") {
+		return nil, fmt.Errorf("inverter busy, try again later: %s", resp)
+	}
+
+	re := regexp.MustCompile(`dtls_port:(\d+)`)
 	matches := re.FindStringSubmatch(resp)
 	if len(matches) < 2 {
 		return nil, fmt.Errorf("could not find dtls_port in response: %s", resp)

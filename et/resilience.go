@@ -35,8 +35,9 @@ import (
 // backoff implements a simple exponential backoff.
 func backoff(ctx context.Context, operation func() error) error {
 	const (
-		maxRetries  = 3
-		initialWait = 500 * time.Millisecond
+		maxRetries  = 5
+		initialWait = 1 * time.Second
+		maxWait     = 10 * time.Second
 	)
 
 	var lastErr error
@@ -54,10 +55,12 @@ func backoff(ctx context.Context, operation func() error) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(wait):
-			// Continue to next retry
 		}
 
 		wait *= 2
+		if wait > maxWait {
+			wait = maxWait
+		}
 	}
 
 	return lastErr
