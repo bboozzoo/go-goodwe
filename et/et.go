@@ -73,8 +73,16 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]float64, error)
 	results := make(map[string]float64)
 
 	for name, def := range registry {
-		// Check if the offset is within the bounds of the returned data
-		if def.Offset >= 0 && def.Offset < len(data) {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return results, ctx.Err()
+		default:
+		}
+
+		if def.Calculator != nil {
+			results[name] = def.Calculator(data)
+		} else if def.Offset >= 0 && def.Offset < len(data) {
 			results[name] = float64(data[def.Offset]) * def.Scale
 		}
 	}
