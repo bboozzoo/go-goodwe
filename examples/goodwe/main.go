@@ -64,7 +64,7 @@ func formatSensorOutput(name string, sv goodwe.SensorValue) string {
 func main() {
 	ip := flag.String("ip", "", "IP address of the GoodWe inverter")
 	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
-	readSensor := flag.String("readsensor", "", "Name of the specific sensor to read and exit.")
+	readSensor := flag.String("readsensor", "", "Comma-separated sensor names to read (e.g. battery_soc,house_consumption). With -poll, these are polled alongside the timestamp.")
 	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
 	verbose := flag.Bool("verbose", false, "Enable info logging.")
 	debug := flag.Bool("debug", false, "Enable debug logging (implies -verbose).")
@@ -138,11 +138,17 @@ func main() {
 		slog.Info("Device Info", "model", info.Model, "serial", info.SerialNumber, "firmware", info.Firmware)
 	}
 
+	var pollSensorNames []string
 	if *readSensor != "" {
-		names := strings.Split(*readSensor, ",")
-		slog.Info("Reading sensors", "names", names)
-		for _, name := range names {
-			name = strings.TrimSpace(name)
+		pollSensorNames = strings.Split(*readSensor, ",")
+		for i := range pollSensorNames {
+			pollSensorNames[i] = strings.TrimSpace(pollSensorNames[i])
+		}
+	}
+
+	// Single read (no polling)
+	if len(pollSensorNames) > 0 && *pollInterval == 0 {
+		for _, name := range pollSensorNames {
 			val, err := inverter.ReadSensor(ctx, name)
 			if err != nil {
 				slog.Error("Failed to read sensor", "sensor", name, "error", err)
@@ -153,6 +159,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Polling loop
 	if *pollInterval > 0 {
 		slog.Info("--- Starting sensor polling", "interval", pollInterval)
 		fmt.Println("Press Ctrl+C to stop.")
@@ -163,19 +170,14 @@ func main() {
 				slog.Info("Polling terminated by user")
 				return
 			case <-time.After(*pollInterval):
-				sensors, err := inverter.GetSensors(ctx)
-				if err != nil {
-					slog.Error("Error reading sensors", "error", err)
-					continue
-				}
-
-				fmt.Printf("[%s] ", time.Now().Format("15:04:05"))
-				if len(sensors) == 0 {
-					fmt.Print("No sensor data available.")
-				} else {
-					for name, val := range sensors {
-						fmt.Print(formatSensorOutput(name, val) + " | ")
+				fmt.Printf("timestamp: %s\n", time.Now().Format(time.RFC3339))
+				for _, name := range pollSensorNames {
+					val, err := inverter.ReadSensor(ctx, name)
+					if err != nil {
+						slog.Error("Failed to read sensor", "sensor", name, "error", err)
+						continue
 					}
+					fmt.Println(formatSensorOutput(name, val))
 				}
 				fmt.Println()
 			}
