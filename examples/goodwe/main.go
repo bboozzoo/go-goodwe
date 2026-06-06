@@ -41,6 +41,21 @@ import (
 	"github.com/bboozzoo/go-goodwe/et"
 )
 
+func formatSensorValue(v any) string {
+	switch val := v.(type) {
+	case float64:
+		return fmt.Sprintf("%.2f", val)
+	case time.Time:
+		return val.Format(time.RFC3339)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+func formatSensorOutput(name string, val any) string {
+	return fmt.Sprintf("%s: %s", name, formatSensorValue(val))
+}
+
 func main() {
 	// Define flags
 	ip := flag.String("ip", "", "IP address of the GoodWe inverter")
@@ -122,7 +137,7 @@ func main() {
 			os.Exit(1)
 		}
 		if val, ok := sensors[*readSensor]; ok {
-			fmt.Printf("%s: %.2f\n", *readSensor, val)
+			fmt.Println(formatSensorOutput(*readSensor, val))
 			os.Exit(0)
 		} else {
 			slog.Error("Sensor not found", "sensor", *readSensor)
@@ -152,7 +167,7 @@ func main() {
 					fmt.Print("No sensor data available.")
 				} else {
 					for name, val := range sensors {
-						fmt.Printf("%s: %.2f | ", name, val)
+						fmt.Print(formatSensorOutput(name, val) + " | ")
 					}
 				}
 				fmt.Println()

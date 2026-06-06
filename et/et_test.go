@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,11 +109,17 @@ func TestParseModbusBulkResponse_GW20K(t *testing.T) {
 	}
 }
 
+func sensorFloat(t *testing.T, data []uint16, name string) float64 {
+	t.Helper()
+	v := registry[name].Calculator(data)
+	f, ok := v.(float64)
+	require.True(t, ok, "sensor %q should return float64, got %T", name, v)
+	return f
+}
+
 func houseConsumptionValue(t *testing.T, data []uint16) float64 {
 	t.Helper()
-	sensor, ok := registry["house_consumption"]
-	require.True(t, ok, "house_consumption not in registry")
-	return sensor.Calculator(data)
+	return sensorFloat(t, data, "house_consumption")
 }
 
 func TestHouseConsumption_GW10K(t *testing.T) {
@@ -189,9 +196,6 @@ func TestHouseConsumptionComponents_GW20K(t *testing.T) {
 
 func TestSensorValues_GW10K(t *testing.T) {
 	data := parseSampleData(t, "GW10K-ET_running_data.hex")
-	run := func(name string) float64 {
-		return registry[name].Calculator(data)
-	}
 
 	actual := []struct {
 		name string
@@ -274,7 +278,7 @@ func TestSensorValues_GW10K(t *testing.T) {
 	}
 	for _, tc := range actual {
 		t.Run(tc.name, func(t *testing.T) {
-			got := run(tc.name)
+			got := sensorFloat(t, data, tc.name)
 			assert.InDelta(t, tc.want, got, 0.01, "%s", tc.name)
 		})
 	}
@@ -282,9 +286,6 @@ func TestSensorValues_GW10K(t *testing.T) {
 
 func TestSensorValues_GW20K(t *testing.T) {
 	data := parseSampleData(t, "GW20K-ET_running_data.hex")
-	run := func(name string) float64 {
-		return registry[name].Calculator(data)
-	}
 
 	actual := []struct {
 		name string
@@ -373,50 +374,55 @@ func TestSensorValues_GW20K(t *testing.T) {
 	}
 	for _, tc := range actual {
 		t.Run(tc.name, func(t *testing.T) {
-			got := run(tc.name)
+			got := sensorFloat(t, data, tc.name)
 			assert.InDelta(t, tc.want, got, 0.01, "%s", tc.name)
 		})
 	}
 }
 
-// TODO: Implement remaining sensors from Python reference.
-// Expected values from GW10K-ET_running_data.hex (Python test):
-//
-//   vpv1=332.6 ipv1=5.1  ppv1=1695  vpv2=332.6 ipv2=5.3  ppv2=1761  ppv=3456
-//   vgrid=239.3 igrid=1.5 fgrid=49.99 pgrid=336
-//   vgrid2=241.5 igrid2=1.3 fgrid2=49.99 pgrid2=287
-//   vgrid3=241.1 igrid3=1.1 fgrid3=49.99 pgrid3=206
-//   total_inverter_power=831 active_power=-3
-//   reactive_power=0 apparent_power=0
-//   backup_v1=239.0 backup_i1=0.6 backup_f1=49.98
-//   backup_p1=107 backup_v2=241.3 backup_i2=0.9 backup_f2=50.0
-//   backup_p2=189 backup_v3=241.2 backup_i3=0.2 backup_f3=49.99
-//   backup_p3=0 load_p1=224 load_p2=80 load_p3=233
-//   load_ptotal=522 backup_ptotal=312 ups_load=4
-//   temperature_air=51.0 temperature_module=0 temperature=58.7
-//   bus_voltage=803.6 nbus_voltage=401.8
-//   vbattery1=254.2 ibattery1=-9.8 pbattery1=-2512
-//   e_total=6085.3 e_day=12.5 e_total_exp=4718.6 h_total=9246
-//   e_day_exp=9.8 e_total_imp=58.0 e_day_imp=0
-//   e_load_total=8820.2 e_load_day=11.6
-//   e_bat_charge_total=2758.1 e_bat_charge_day=5.3
-//   e_bat_discharge_total=2442.1 e_bat_discharge_day=2.9
-//
-// Register offsets (base 35100):
-//   pv1 voltage: 3 (uint16, scale 0.1)
-//   pv1 current: 4 (uint16, scale 0.1)
-//   pv1 power:   5 (uint32)
-//   pv2 voltage: 7 (uint16, scale 0.1)
-//   pv2 current: 8 (uint16, scale 0.1)
-//   pv2 power:   9 (uint32)
-//   pv3 power:   13 (uint32)
-//   pv4 power:   17 (uint32)
-//   grid L1 voltage: 21 (uint16, scale 0.1)
-//   grid L1 current: 22 (uint16, scale 0.1)
-//   grid L1 freq:    23 (int16, scale 0.01)
-//   grid L1 power:   25 (int16)
-//   grid L2 voltage: 26 (uint16, scale 0.1)
-//   ...
-//   battery power:   82 (int32)
-//   active power:    40 (int16)
-//   house_consumption: calculated (ppv1+ppv2+ppv3+ppv4+pbattery1-active_power)
+func TestTimestamp_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	v := registry["timestamp"].Calculator(data)
+	ts, ok := v.(time.Time)
+	require.True(t, ok, "timestamp should return time.Time, got %T", v)
+	expected := time.Date(2021, time.August, 22, 11, 11, 12, 0, time.Local)
+	assert.Equal(t, expected, ts)
+}
+
+func TestTimestamp_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+	v := registry["timestamp"].Calculator(data)
+	ts, ok := v.(time.Time)
+	require.True(t, ok, "timestamp should return time.Time, got %T", v)
+	expected := time.Date(2026, time.March, 29, 17, 26, 45, 0, time.Local)
+	assert.Equal(t, expected, ts)
+}
+
+func TestPVMode_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	// GW10K has 2 MPPT; registers at index 19 are zero (no PV3/PV4),
+	// register at index 20 is 0x0202 → both channels active (mode=2).
+	assert.Equal(t, float64(0), sensorFloat(t, data, "pv4_mode"))
+	assert.Equal(t, float64(0), sensorFloat(t, data, "pv3_mode"))
+	assert.Equal(t, float64(2), sensorFloat(t, data, "pv2_mode"))
+	assert.Equal(t, float64(2), sensorFloat(t, data, "pv1_mode"))
+}
+
+func TestGridInOut_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	// active_power = -3 → grid_in_out = 0 (idle)
+	assert.Equal(t, float64(0), sensorFloat(t, data, "grid_in_out"))
+}
+
+func TestGridInOut_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+	// active_power = 1556 → grid_in_out = 1 (exporting)
+	assert.Equal(t, float64(1), sensorFloat(t, data, "grid_in_out"))
+}
+
+// TODO: Remaining sensors from Python reference:
+// - label/enum sensors (pv*_mode_label, grid_mode_label, etc.) — need string return support
+// - error_codes/diagnose_result bitmap decoding
+// - battery info sensors (register 37000, separate bulk read)
+// - meter sensors (register 36000, separate bulk read)
+// - MPPT sensors (register 35301, separate bulk read)

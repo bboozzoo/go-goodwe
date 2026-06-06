@@ -89,7 +89,7 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 }
 
 // GetSensors retrieves the sensor values from the registry via a single bulk request.
-func (e *ETInverter) GetSensors(ctx context.Context) (map[string]float64, error) {
+func (e *ETInverter) GetSensors(ctx context.Context) (map[string]any, error) {
 	// Perform a single bulk request to get all telemetry in one go.
 	// Based on user feedback, target register 35100 with a quantity of 125.
 	data, err := e.service.readModbusBulk(ctx, 35100, 125)
@@ -97,7 +97,7 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]float64, error)
 		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
 	}
 
-	results := make(map[string]float64)
+	results := make(map[string]any)
 
 	for name, def := range registry {
 		// Check for context cancellation

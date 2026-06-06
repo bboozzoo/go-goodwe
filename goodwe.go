@@ -49,6 +49,7 @@ type Inverter interface {
 	// GetInfo retrieves basic metadata.
 	GetInfo(ctx context.Context) (*Info, error)
 
-	// GetSensors retrieves current sensor values.
-	GetSensors(ctx context.Context) (map[string]float64, error)
+// GetSensors retrieves current sensor values.
+// Values are float64 for numeric sensors, time.Time for timestamp.
+GetSensors(ctx context.Context) (map[string]any, error)
 }

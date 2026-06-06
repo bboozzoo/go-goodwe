@@ -1,10 +1,6 @@
 # Go binaries
 /main
+/goodwe
 *.exe
 *.test
 *.out
-
-# IDE
-.idea/
-.vscode/
-goodwe

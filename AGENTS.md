@@ -3,7 +3,8 @@
 ## Core Context
 - This project is a Go implementation of a GoodWe inverter library.
 - The Python implementation in `python/goodwe/` is the primary reference for protocol logic and implementation details.
-- `examples/cmd/goodwe/main.go` is currently a non-functional template for a CLI client.
+- `examples/cmd/goodwe/main.go` is a functional CLI client with -readsensor, -poll, and -listsensors flags.
+- `GetSensors(ctx)` returns `map[string]any` — numeric sensors are `float64`, `timestamp` is `time.Time`.
 
 ## Development Workflow
 - **Code Quality**: 
