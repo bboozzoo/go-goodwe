@@ -30,6 +30,7 @@ package et
 import (
 	"encoding/binary"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -400,12 +401,48 @@ var mpptRegistry = map[string]sensorDefinition{
 	"ipv16":      {Name: "PV16 Current", Unit: "A", Calculator: uint16Reader(26, 0.1)},
 }
 
-func GetSensorNames() []string {
-	names := make([]string, 0, len(registry))
-	for name := range registry {
-		names = append(names, name)
+func (b blockType) String() string {
+	switch b {
+	case blockMain:
+		return "Main Telemetry"
+	case blockBattery:
+		return "Battery"
+	case blockMeter:
+		return "Meter"
+	case blockMPPT:
+		return "MPPT"
+	default:
+		return "Unknown"
 	}
+}
+
+// GetSensorNames returns all sensor names across all blocks.
+func GetSensorNames() []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, reg := range []map[string]sensorDefinition{registry, batteryRegistry, meterRegistry, mpptRegistry} {
+		for name := range reg {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
 	return names
+}
+
+// GetSensorNamesByBlock returns sensor names grouped by their register block.
+func GetSensorNamesByBlock() map[string][]string {
+	groups := make(map[string][]string)
+	for name, sb := range sensorLookup {
+		label := sb.block.String()
+		groups[label] = append(groups[label], name)
+	}
+	for _, names := range groups {
+		sort.Strings(names)
+	}
+	return groups
 }
 
 // Reader helpers for common sensor types.

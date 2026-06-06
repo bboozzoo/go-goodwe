@@ -34,7 +34,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"sort"
 	"syscall"
 	"time"
 
@@ -78,11 +77,17 @@ func main() {
 	}
 
 	if *listSensors {
-		sensors := et.GetSensorNames()
-		sort.Strings(sensors)
+		groups := et.GetSensorNamesByBlock()
 		fmt.Println("Available sensors:")
-		for _, s := range sensors {
-			fmt.Printf(" - %s\n", s)
+		for _, block := range []string{"Main Telemetry", "Battery", "Meter", "MPPT"} {
+			names := groups[block]
+			if len(names) == 0 {
+				continue
+			}
+			fmt.Printf("\n %s:\n", block)
+			for _, s := range names {
+				fmt.Printf("  - %s\n", s)
+			}
 		}
 		os.Exit(0)
 	}
