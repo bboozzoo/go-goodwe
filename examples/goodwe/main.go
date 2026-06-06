@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -130,13 +131,17 @@ func main() {
 	}
 
 	if *readSensor != "" {
-		slog.Info("Single sensor read requested", "sensor", *readSensor)
-		val, err := inverter.ReadSensor(ctx, *readSensor)
-		if err != nil {
-			slog.Error("Failed to read sensor", "error", err)
-			os.Exit(1)
+		names := strings.Split(*readSensor, ",")
+		slog.Info("Reading sensors", "names", names)
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			val, err := inverter.ReadSensor(ctx, name)
+			if err != nil {
+				slog.Error("Failed to read sensor", "sensor", name, "error", err)
+				os.Exit(1)
+			}
+			fmt.Println(formatSensorOutput(name, val))
 		}
-		fmt.Println(formatSensorOutput(*readSensor, val))
 		os.Exit(0)
 	}
 
