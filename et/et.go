@@ -75,6 +75,15 @@ func (e *ETInverter) Close() error {
 	return e.service.close()
 }
 
+// reconnect closes the existing connection and re-establishes it.
+func (e *ETInverter) reconnect(ctx context.Context) error {
+	slog.Info("Reconnecting to inverter...")
+	if err := e.service.close(); err != nil {
+		slog.Warn("Error closing existing connection", "error", err)
+	}
+	return e.Connect(ctx)
+}
+
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	return &goodwe.Info{
 		SerialNumber: e.serial,
@@ -84,7 +93,7 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 }
 
 func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
-	data, err := e.service.readModbusBulk(ctx, 35100, 125)
+	data, err := e.readOnceWithFallback(ctx, 35100, 125)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
 	}
@@ -185,15 +194,25 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 		return goodwe.SensorValue{}, fmt.Errorf("unknown sensor: %s", name)
 	}
 
-	data, err := e.service.readModbusBulk(ctx, sb.startReg, sb.readQty)
+	// Try primary read size, with one reconnect on failure.
+	data, err := e.readOnceWithFallback(ctx, sb.startReg, sb.readQty)
 	if err != nil {
-		// Meter supports fallback: try smaller read sizes
+		// Meter supports smaller read sizes on ILLEGAL_DATA_ADDRESS.
 		if sb.block == blockMeter && isIllegalDataAddress(err) {
-			if sb.readQty >= 125 {
-				data, err = e.service.readModbusBulk(ctx, sb.startReg, 58)
+			var fallbackQty uint16
+			switch {
+			case sb.readQty >= 125:
+				fallbackQty = 58
+			case sb.readQty >= 58:
+				fallbackQty = 45
 			}
-			if err != nil && isIllegalDataAddress(err) && sb.readQty >= 58 {
-				data, err = e.service.readModbusBulk(ctx, sb.startReg, 45)
+			if fallbackQty > 0 {
+				// No reconnect here — the connection is fine, inverter just doesn't
+				// support this many registers.
+				data, err = e.service.readModbusBulk(ctx, sb.startReg, fallbackQty)
+				if err != nil && isIllegalDataAddress(err) && fallbackQty == 58 {
+					data, err = e.service.readModbusBulk(ctx, sb.startReg, 45)
+				}
 			}
 		}
 	}
@@ -206,6 +225,19 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 		Unit:  sb.def.Unit,
 		Name:  sb.def.Name,
 	}, nil
+}
+
+// readOnceWithFallback tries a bulk read, reconnecting once on connection errors.
+func (e *ETInverter) readOnceWithFallback(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
+	data, err := e.service.readModbusBulk(ctx, startReg, quantity)
+	if err != nil && !isIllegalDataAddress(err) {
+		slog.Warn("Modbus read failed, attempting reconnect", "error", err)
+		if rerr := e.reconnect(ctx); rerr != nil {
+			return nil, fmt.Errorf("reconnect failed: %w (original error: %v)", rerr, err)
+		}
+		data, err = e.service.readModbusBulk(ctx, startReg, quantity)
+	}
+	return data, err
 }
 
 // isIllegalDataAddress checks if a Modbus error is ILLEGAL_DATA_ADDRESS (0x02).
