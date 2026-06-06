@@ -66,12 +66,15 @@ func main() {
 	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
 	readSensor := flag.String("readsensor", "", "Name of the specific sensor to read and exit.")
 	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
-	verbose := flag.Bool("verbose", false, "Enable debug logging.")
+	verbose := flag.Bool("verbose", false, "Enable info logging.")
+	debug := flag.Bool("debug", false, "Enable debug logging (implies -verbose).")
 	flag.Parse()
 
-	level := slog.LevelInfo
-	if *verbose {
+	level := slog.LevelWarn
+	if *debug {
 		level = slog.LevelDebug
+	} else if *verbose {
+		level = slog.LevelInfo
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
