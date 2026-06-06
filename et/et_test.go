@@ -6,246 +6,158 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Expected sensor values from the Python test suite (GW10K-ET_running_data.hex).
+// Expected sensor values from the Python test suite.
 // Python reference: https://github.com/bboozzoo/py-goodwe (MIT License)
-//
-// house_consumption formula per Python:
-//   ppv1 + ppv2 + ppv3 + ppv4 + pbattery1 - active_power
-//   = 1695 + 1761 + 0 + 0 + (-2512) - (-3)
-//   = 947
 
 func loadSampleHex(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatalf("failed to read testdata/%s: %v", name, err)
-	}
+	require.NoError(t, err, "failed to read testdata/%s", name)
 	b, err := hex.DecodeString(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatalf("failed to decode hex: %v", err)
-	}
+	require.NoError(t, err, "failed to decode hex")
 	return b
 }
 
-func TestParseModbusBulkResponse_GW10K(t *testing.T) {
-	raw := loadSampleHex(t, "GW10K-ET_running_data.hex")
+func parseSampleData(t *testing.T, name string) []uint16 {
+	t.Helper()
+	raw := loadSampleHex(t, name)
 	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
-	if len(data) != 125 {
-		t.Fatalf("expected 125 registers, got %d", len(data))
-	}
-	// Spot-check a few known register values from Python test
+	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
+	require.Len(t, data, 125, "expected 125 registers")
+	return data
+}
+
+func TestParseModbusBulkResponse_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
 	tests := []struct {
 		index int
 		want  uint16
 		name  string
 	}{
-		{0, 0x1508, "timestamp[0]"}, // register 35100
-		{3, 0x0CFE, "vpv1 (35103)"}, // vpv1 raw = 0x0CFE=3326 → 332.6V
-		{4, 0x0033, "ipv1 (35104)"}, // ipv1 raw = 0x33=51 → 5.1A
+		{0, 0x1508, "timestamp[0]"},
+		{3, 0x0CFE, "vpv1 (35103)"},
+		{4, 0x0033, "ipv1 (35104)"},
 		{7, 0x0CFE, "vpv2 (35107)"},
 		{8, 0x0035, "ipv2 (35108)"},
 		{10, 0x06E1, "ppv2 high (35110)"},
-		{21, 0x0959, "vgrid (35121)"}, // vgrid = 0x0959 = 2393 → 239.3V
-		{25, 0x0150, "pgrid (35125)"}, // pgrid = 0x0150 = 336W
+		{21, 0x0959, "vgrid (35121)"},
+		{25, 0x0150, "pgrid (35125)"},
 		{36, 0x0001, "grid_mode (35136)"},
 	}
 	for _, tt := range tests {
-		if tt.index >= len(data) {
-			t.Errorf("index %d out of range", tt.index)
-			continue
-		}
-		if data[tt.index] != tt.want {
-			t.Errorf("%s (index %d): got 0x%04X, want 0x%04X", tt.name, tt.index, data[tt.index], tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, data[tt.index], "index %d", tt.index)
+		})
 	}
 }
-
-func TestHouseConsumption_GW10K(t *testing.T) {
-	raw := loadSampleHex(t, "GW10K-ET_running_data.hex")
-	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
-
-	sensor := registry["house_consumption"]
-	got := sensor.Calculator(data)
-
-	// Python reference: house_consumption = 947 W
-	// 1695 + 1761 + 0 + 0 + (-2512) - (-3) = 947
-	want := 947.0
-	if got != want {
-		t.Errorf("house_consumption: got %.0f, want %.0f", got, want)
-	}
-}
-
-func TestHouseConsumptionComponents_GW10K(t *testing.T) {
-	raw := loadSampleHex(t, "GW10K-ET_running_data.hex")
-	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
-
-	// Individual components of house_consumption, per Python reference
-	// ppv1 = read_bytes4(data, 35105, 0)
-	ppv1 := readUint32(data, 5)
-	if ppv1 == undef32 {
-		ppv1 = 0
-	}
-	if ppv1 != 1695 {
-		t.Errorf("ppv1: got %d, want 1695", ppv1)
-	}
-
-	// ppv2 = read_bytes4(data, 35109, 0)
-	ppv2 := readUint32(data, 9)
-	if ppv2 == undef32 {
-		ppv2 = 0
-	}
-	if ppv2 != 1761 {
-		t.Errorf("ppv2: got %d, want 1761", ppv2)
-	}
-
-	// ppv3 = read_bytes4(data, 35113, 0) — undefined (0xFFFFFFFF) → 0
-	ppv3 := readUint32(data, 13)
-	if ppv3 == undef32 {
-		ppv3 = 0
-	}
-	if ppv3 != 0 {
-		t.Errorf("ppv3: got %d, want 0 (undefined)", ppv3)
-	}
-
-	// ppv4 = read_bytes4(data, 35117, 0) — undefined (0xFFFFFFFF) → 0
-	ppv4 := readUint32(data, 17)
-	if ppv4 == undef32 {
-		ppv4 = 0
-	}
-	if ppv4 != 0 {
-		t.Errorf("ppv4: got %d, want 0 (undefined)", ppv4)
-	}
-
-	// pbattery1 = read_bytes4_signed(data, 35182)
-	pbattery1 := int32(readUint32(data, 82))
-	if pbattery1 != -2512 {
-		t.Errorf("pbattery1: got %d, want -2512", pbattery1)
-	}
-
-	// active_power = read_bytes2_signed(data, 35140)
-	activePower := int16(data[40])
-	if activePower != -3 {
-		t.Errorf("active_power: got %d, want -3", activePower)
-	}
-}
-
-// TODO: Implement remaining sensors from Python reference.
-
-// --- GW20K-ET tests ---
 
 func TestParseModbusBulkResponse_GW20K(t *testing.T) {
-	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
-	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
-	if len(data) != 125 {
-		t.Fatalf("expected 125 registers, got %d", len(data))
-	}
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
 	tests := []struct {
 		index int
 		want  uint16
 		name  string
 	}{
 		{0, 0x1A03, "timestamp[0]"},
-		{3, 0x192B, "vpv1 (35103)"},      // 0x192B = 6443 → 644.3V
-		{4, 0x0011, "ipv1 (35104)"},      // 0x11 = 17 → 1.7A
-		{6, 0x044A, "ppv1 high (35106)"}, // 0x044A × 256 = 1098W
+		{3, 0x192B, "vpv1 (35103)"},
+		{4, 0x0011, "ipv1 (35104)"},
+		{6, 0x044A, "ppv1 high (35106)"},
 		{7, 0x192B, "vpv2 (35107)"},
-		{10, 0x03E5, "ppv2 high (35110)"}, // 0x03E5 × 256 = 997W
-		{11, 0x163D, "vpv3 (35111)"},      // 0x163D = 5693 → 569.3V
+		{10, 0x03E5, "ppv2 high (35110)"},
+		{11, 0x163D, "vpv3 (35111)"},
 		{15, 0x163D, "vpv4 (35115)"},
-		{25, 0x028B, "pgrid (35125)"}, // 0x028B = 651W
+		{25, 0x028B, "pgrid (35125)"},
 		{36, 0x0001, "grid_mode (35136)"},
 	}
 	for _, tt := range tests {
-		if tt.index >= len(data) {
-			t.Errorf("index %d out of range", tt.index)
-			continue
-		}
-		if data[tt.index] != tt.want {
-			t.Errorf("%s (index %d): got 0x%04X, want 0x%04X", tt.name, tt.index, data[tt.index], tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, data[tt.index], "index %d", tt.index)
+		})
 	}
 }
 
-func TestHouseConsumption_GW20K(t *testing.T) {
-	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
-	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
-
-	sensor := registry["house_consumption"]
-	got := sensor.Calculator(data)
-
-	// Python reference: house_consumption = 386 W
-	// 1098 + 997 + 0 + 0 + (-153) - 1556 = 386
-	want := 386.0
-	if got != want {
-		t.Errorf("house_consumption: got %.0f, want %.0f", got, want)
-	}
+func houseConsumptionValue(t *testing.T, data []uint16) float64 {
+	t.Helper()
+	sensor, ok := registry["house_consumption"]
+	require.True(t, ok, "house_consumption not in registry")
+	return sensor.Calculator(data)
 }
 
-func TestHouseConsumptionComponents_GW20K(t *testing.T) {
-	raw := loadSampleHex(t, "GW20K-ET_running_data.hex")
-	data, err := parseModbusBulkResponse(raw)
-	if err != nil {
-		t.Fatalf("parseModbusBulkResponse: %v", err)
-	}
+func TestHouseConsumption_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
+	assert.Equal(t, 947.0, houseConsumptionValue(t, data))
+}
+
+func TestHouseConsumptionComponents_GW10K(t *testing.T) {
+	data := parseSampleData(t, "GW10K-ET_running_data.hex")
 
 	ppv1 := readUint32(data, 5)
 	if ppv1 == undef32 {
 		ppv1 = 0
 	}
-	if ppv1 != 1098 {
-		t.Errorf("ppv1: got %d, want 1098", ppv1)
-	}
+	assert.EqualValues(t, 1695, ppv1, "ppv1")
 
 	ppv2 := readUint32(data, 9)
 	if ppv2 == undef32 {
 		ppv2 = 0
 	}
-	if ppv2 != 997 {
-		t.Errorf("ppv2: got %d, want 997", ppv2)
-	}
+	assert.EqualValues(t, 1761, ppv2, "ppv2")
 
 	ppv3 := readUint32(data, 13)
 	if ppv3 == undef32 {
 		ppv3 = 0
 	}
-	if ppv3 != 0 {
-		t.Errorf("ppv3: got %d, want 0", ppv3)
-	}
+	assert.EqualValues(t, 0, ppv3, "ppv3 (undefined)")
 
 	ppv4 := readUint32(data, 17)
 	if ppv4 == undef32 {
 		ppv4 = 0
 	}
-	if ppv4 != 0 {
-		t.Errorf("ppv4: got %d, want 0", ppv4)
-	}
+	assert.EqualValues(t, 0, ppv4, "ppv4 (undefined)")
 
-	pbattery1 := int32(readUint32(data, 82))
-	if pbattery1 != -153 {
-		t.Errorf("pbattery1: got %d, want -153", pbattery1)
-	}
+	assert.Equal(t, int32(-2512), int32(readUint32(data, 82)), "pbattery1")
+	assert.Equal(t, int16(-3), int16(data[40]), "active_power")
+}
 
-	activePower := int16(data[40])
-	if activePower != 1556 {
-		t.Errorf("active_power: got %d, want 1556", activePower)
+func TestHouseConsumption_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+	assert.Equal(t, 386.0, houseConsumptionValue(t, data))
+}
+
+func TestHouseConsumptionComponents_GW20K(t *testing.T) {
+	data := parseSampleData(t, "GW20K-ET_running_data.hex")
+
+	ppv1 := readUint32(data, 5)
+	if ppv1 == undef32 {
+		ppv1 = 0
 	}
+	assert.EqualValues(t, 1098, ppv1, "ppv1")
+
+	ppv2 := readUint32(data, 9)
+	if ppv2 == undef32 {
+		ppv2 = 0
+	}
+	assert.EqualValues(t, 997, ppv2, "ppv2")
+
+	ppv3 := readUint32(data, 13)
+	if ppv3 == undef32 {
+		ppv3 = 0
+	}
+	assert.EqualValues(t, 0, ppv3, "ppv3")
+
+	ppv4 := readUint32(data, 17)
+	if ppv4 == undef32 {
+		ppv4 = 0
+	}
+	assert.EqualValues(t, 0, ppv4, "ppv4")
+
+	assert.Equal(t, int32(-153), int32(readUint32(data, 82)), "pbattery1")
+	assert.Equal(t, int16(1556), int16(data[40]), "active_power")
 }
 
 // TODO: Implement remaining sensors from Python reference.
