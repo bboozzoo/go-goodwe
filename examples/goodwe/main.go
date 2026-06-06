@@ -66,6 +66,7 @@ func main() {
 	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
 	readSensor := flag.String("readsensor", "", "Comma-separated sensor names to read (e.g. battery_soc,house_consumption). With -poll, these are polled alongside the timestamp.")
 	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
+	showInfo := flag.Bool("info", false, "Display inverter information and exit.")
 	verbose := flag.Bool("verbose", false, "Enable info logging.")
 	debug := flag.Bool("debug", false, "Enable debug logging (implies -verbose).")
 	flag.Parse()
@@ -136,6 +137,23 @@ func main() {
 		slog.Warn("Could not retrieve device info", "error", err)
 	} else {
 		slog.Info("Device Info", "model", info.Model, "serial", info.SerialNumber, "firmware", info.Firmware)
+	}
+
+	if *showInfo {
+		fmt.Println("Inverter Information:")
+		fmt.Printf("  Serial:     %s\n", info.SerialNumber)
+		fmt.Printf("  Model:      %s\n", info.Model)
+		fmt.Printf("  Firmware:   %s\n", info.Firmware)
+		fmt.Printf("  DSP:        %s\n", info.DSPVersion)
+		fmt.Printf("  ARM:        %s\n", info.ARMVersion)
+		if info.RatedPower > 0 {
+			fmt.Printf("  Rated:      %d W\n", info.RatedPower)
+		}
+		modeVal, err := inverter.ReadSensor(ctx, "work_mode_label")
+		if err == nil {
+			fmt.Printf("  Mode:       %s\n", modeVal.Value)
+		}
+		os.Exit(0)
 	}
 
 	var pollSensorNames []string

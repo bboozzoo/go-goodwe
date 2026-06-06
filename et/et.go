@@ -29,6 +29,7 @@ package et
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -85,11 +86,31 @@ func (e *ETInverter) reconnect(ctx context.Context) error {
 }
 
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
-	return &goodwe.Info{
+	info := &goodwe.Info{
 		SerialNumber: e.serial,
-		Model:        "ET-Series",
-		Firmware:     "1.0.0",
-	}, nil
+	}
+
+	data, err := e.service.readModbusBulk(ctx, 35000, 33)
+	if err != nil {
+		slog.Warn("Failed to read device info registers", "error", err)
+		return info, nil
+	}
+
+	if len(data) < 66 {
+		return info, nil
+	}
+
+	info.SerialNumber = decodeGoodweString(data[6:22])
+	info.Model = decodeGoodweString(data[22:32])
+	info.Firmware = decodeGoodweString(data[42:54])
+	info.RatedPower = int(binary.BigEndian.Uint16(data[2:4]))
+	info.DSPVersion = fmt.Sprintf("%d.%d",
+		binary.BigEndian.Uint16(data[32:34]),
+		binary.BigEndian.Uint16(data[34:36]),
+	)
+	info.ARMVersion = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[38:40]))
+
+	return info, nil
 }
 
 func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
@@ -243,4 +264,28 @@ func (e *ETInverter) readOnceWithFallback(ctx context.Context, startReg, quantit
 // isIllegalDataAddress checks if a Modbus error is ILLEGAL_DATA_ADDRESS (0x02).
 func isIllegalDataAddress(err error) bool {
 	return strings.Contains(err.Error(), "exception 0x02")
+}
+
+// decodeGoodweString decodes a GoodWe device info string field.
+// Mirrors Python's _decode(): UTF-16BE if any byte < 0x20, otherwise ASCII.
+func decodeGoodweString(data []byte) string {
+	hasLow := false
+	for _, b := range data {
+		if b < 32 {
+			hasLow = true
+			break
+		}
+	}
+	if hasLow {
+		runes := make([]rune, 0, len(data)/2)
+		for i := 0; i+1 < len(data); i += 2 {
+			r := rune(binary.BigEndian.Uint16(data[i:]))
+			if r == 0 {
+				continue
+			}
+			runes = append(runes, r)
+		}
+		return strings.TrimRight(string(runes), " \t\n\r\x00")
+	}
+	return strings.TrimRight(string(data), " \t\n\r\x00")
 }

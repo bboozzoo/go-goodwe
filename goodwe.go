@@ -41,6 +41,9 @@ type Info struct {
 	SerialNumber string
 	Model        string
 	Firmware     string
+	RatedPower   int
+	DSPVersion   string
+	ARMVersion   string
 }
 
 // Inverter defines the contract for any GoodWe inverter implementation.
