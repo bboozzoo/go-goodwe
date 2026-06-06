@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026, Maciej Borzecki <maciek.borzecki@gmail.com>
+// Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 package et
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -39,9 +40,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Expected sensor values from the Python test suite.
-// Python reference: https://github.com/bboozzoo/py-goodwe (MIT License)
-
 func loadSampleHex(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
@@ -51,13 +49,18 @@ func loadSampleHex(t *testing.T, name string) []byte {
 	return b
 }
 
-func parseSampleData(t *testing.T, name string) []uint16 {
+func parseSampleData(t *testing.T, name string) []byte {
 	t.Helper()
 	raw := loadSampleHex(t, name)
 	data, err := parseModbusBulkResponse(raw)
 	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
-	require.Len(t, data, 125, "expected 125 registers")
+	require.Len(t, data, 250, "expected 250 bytes (125 registers)")
 	return data
+}
+
+func reg16(t *testing.T, data []byte, idx int) uint16 {
+	t.Helper()
+	return binary.BigEndian.Uint16(data[idx*2 : idx*2+2])
 }
 
 func TestParseModbusBulkResponse_GW10K(t *testing.T) {
@@ -79,7 +82,7 @@ func TestParseModbusBulkResponse_GW10K(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, data[tt.index], "index %d", tt.index)
+			assert.Equal(t, tt.want, reg16(t, data, tt.index), "index %d", tt.index)
 		})
 	}
 }
@@ -94,7 +97,7 @@ func TestParseModbusBulkResponse_GW20K(t *testing.T) {
 		{0, 0x1A03, "timestamp[0]"},
 		{3, 0x192B, "vpv1 (35103)"},
 		{4, 0x0011, "ipv1 (35104)"},
-		{6, 0x044A, "ppv1 high (35106)"},
+		{6, 0x044A, "ppv1.high (35106)"},
 		{7, 0x192B, "vpv2 (35107)"},
 		{10, 0x03E5, "ppv2 high (35110)"},
 		{11, 0x163D, "vpv3 (35111)"},
@@ -104,20 +107,20 @@ func TestParseModbusBulkResponse_GW20K(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, data[tt.index], "index %d", tt.index)
+			assert.Equal(t, tt.want, reg16(t, data, tt.index), "index %d", tt.index)
 		})
 	}
 }
 
-func sensorFloat(t *testing.T, data []uint16, name string) float64 {
+func sensorFloat(t *testing.T, data []byte, name string) float64 {
 	t.Helper()
-	v := registry[name].Calculator(data)
-	f, ok := v.(float64)
-	require.True(t, ok, "sensor %q should return float64, got %T", name, v)
+	sv := registry[name].Calculator(data)
+	f, ok := sv.(float64)
+	require.True(t, ok, "sensor %q should return float64, got %T", name, sv)
 	return f
 }
 
-func houseConsumptionValue(t *testing.T, data []uint16) float64 {
+func houseConsumptionValue(t *testing.T, data []byte) float64 {
 	t.Helper()
 	return sensorFloat(t, data, "house_consumption")
 }
@@ -155,7 +158,7 @@ func TestHouseConsumptionComponents_GW10K(t *testing.T) {
 	assert.EqualValues(t, 0, ppv4, "ppv4 (undefined)")
 
 	assert.Equal(t, int32(-2512), int32(readUint32(data, 82)), "pbattery1")
-	assert.Equal(t, int16(-3), int16(data[40]), "active_power")
+	assert.Equal(t, int16(-3), int16(binary.BigEndian.Uint16(data[80:82])), "active_power")
 }
 
 func TestHouseConsumption_GW20K(t *testing.T) {
@@ -191,7 +194,7 @@ func TestHouseConsumptionComponents_GW20K(t *testing.T) {
 	assert.EqualValues(t, 0, ppv4, "ppv4")
 
 	assert.Equal(t, int32(-153), int32(readUint32(data, 82)), "pbattery1")
-	assert.Equal(t, int16(1556), int16(data[40]), "active_power")
+	assert.Equal(t, int16(1556), int16(binary.BigEndian.Uint16(data[80:82])), "active_power")
 }
 
 func TestSensorValues_GW10K(t *testing.T) {
@@ -400,8 +403,6 @@ func TestTimestamp_GW20K(t *testing.T) {
 
 func TestPVMode_GW10K(t *testing.T) {
 	data := parseSampleData(t, "GW10K-ET_running_data.hex")
-	// GW10K has 2 MPPT; registers at index 19 are zero (no PV3/PV4),
-	// register at index 20 is 0x0202 → both channels active (mode=2).
 	assert.Equal(t, float64(0), sensorFloat(t, data, "pv4_mode"))
 	assert.Equal(t, float64(0), sensorFloat(t, data, "pv3_mode"))
 	assert.Equal(t, float64(2), sensorFloat(t, data, "pv2_mode"))
@@ -410,19 +411,16 @@ func TestPVMode_GW10K(t *testing.T) {
 
 func TestGridInOut_GW10K(t *testing.T) {
 	data := parseSampleData(t, "GW10K-ET_running_data.hex")
-	// active_power = -3 → grid_in_out = 0 (idle)
 	assert.Equal(t, float64(0), sensorFloat(t, data, "grid_in_out"))
 }
 
 func TestGridInOut_GW20K(t *testing.T) {
 	data := parseSampleData(t, "GW20K-ET_running_data.hex")
-	// active_power = 1556 → grid_in_out = 1 (exporting)
 	assert.Equal(t, float64(1), sensorFloat(t, data, "grid_in_out"))
 }
 
 // TODO: Remaining sensors from Python reference:
-// - label/enum sensors (pv*_mode_label, grid_mode_label, etc.) — need string return support
-// - error_codes/diagnose_result bitmap decoding
-// - battery info sensors (register 37000, separate bulk read)
-// - meter sensors (register 36000, separate bulk read)
-// - MPPT sensors (register 35301, separate bulk read)
+// - label/enum sensors (pv*_mode_label, grid_mode_label, etc.) — Phase 2
+// - battery info sensors (register 37000, separate bulk read) — Phase 3
+// - meter sensors (register 36000, separate bulk read) — Phase 4
+// - MPPT sensors (register 35301, separate bulk read) — Phase 5

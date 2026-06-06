@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026, Maciej Borzecki <maciek.borzecki@gmail.com>
+// Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -34,14 +34,12 @@ import (
 	"github.com/bboozzoo/go-goodwe"
 )
 
-// ETInverter implements the goodwe.Inverter interface for the ET line.
 type ETInverter struct {
 	ip      string
 	serial  string
 	service *service
 }
 
-// New creates a new ETInverter instance.
 func New(ip string) *ETInverter {
 	return &ETInverter{
 		ip:      ip,
@@ -49,9 +47,7 @@ func New(ip string) *ETInverter {
 	}
 }
 
-// Connect performs the probe and DTLS connection.
 func (e *ETInverter) Connect(ctx context.Context) error {
-	// 1. Probe with backoff
 	var probeRes *probeResult
 	err := backoff(ctx, func() error {
 		var pErr error
@@ -65,7 +61,6 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 
 	e.serial = probeRes.SerialNumber
 
-	// 2. Connect via DTLS
 	err = e.service.connectDTLS(ctx, probeRes.DTLSPort)
 	if err != nil {
 		return fmt.Errorf("connection failed during DTLS handshake: %w", err)
@@ -74,12 +69,10 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Close cleans up the connection.
 func (e *ETInverter) Close() error {
 	return e.service.close()
 }
 
-// GetInfo retrieves the inverter information.
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	return &goodwe.Info{
 		SerialNumber: e.serial,
@@ -88,26 +81,26 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	}, nil
 }
 
-// GetSensors retrieves the sensor values from the registry via a single bulk request.
-func (e *ETInverter) GetSensors(ctx context.Context) (map[string]any, error) {
-	// Perform a single bulk request to get all telemetry in one go.
-	// Based on user feedback, target register 35100 with a quantity of 125.
+func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
 	data, err := e.service.readModbusBulk(ctx, 35100, 125)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
 	}
 
-	results := make(map[string]any)
+	results := make(map[string]goodwe.SensorValue)
 
 	for name, def := range registry {
-		// Check for context cancellation
 		select {
 		case <-ctx.Done():
 			return results, ctx.Err()
 		default:
 		}
 
-		results[name] = def.Calculator(data)
+		results[name] = goodwe.SensorValue{
+			Value: def.Calculator(data),
+			Unit:  def.Unit,
+			Name:  def.Name,
+		}
 	}
 
 	return results, nil

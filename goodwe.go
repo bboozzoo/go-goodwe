@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026, Maciej Borzecki <maciek.borzecki@gmail.com>
+// Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -27,9 +27,14 @@
 
 package goodwe
 
-import (
-	"context"
-)
+import "context"
+
+// SensorValue holds a single sensor reading with metadata.
+type SensorValue struct {
+	Value any    // float64, string, time.Time, or other decoded types
+	Unit  string // e.g. "V", "A", "W", "kWh", "C", "Hz", "var", "VA", "%"
+	Name  string // human-readable name
+}
 
 // Info contains basic metadata about the inverter.
 type Info struct {
@@ -40,16 +45,8 @@ type Info struct {
 
 // Inverter defines the contract for any GoodWe inverter implementation.
 type Inverter interface {
-	// Connect performs the probe and establishes the connection.
 	Connect(ctx context.Context) error
-
-	// Close gracefully shuts down the connection.
 	Close() error
-
-	// GetInfo retrieves basic metadata.
 	GetInfo(ctx context.Context) (*Info, error)
-
-// GetSensors retrieves current sensor values.
-// Values are float64 for numeric sensors, time.Time for timestamp.
-GetSensors(ctx context.Context) (map[string]any, error)
+	GetSensors(ctx context.Context) (map[string]SensorValue, error)
 }

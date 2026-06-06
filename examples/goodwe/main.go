@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026, Maciej Borzecki <maciek.borzecki@gmail.com>
+// Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bboozzoo/go-goodwe"
 	"github.com/bboozzoo/go-goodwe/et"
 )
 
@@ -52,30 +53,30 @@ func formatSensorValue(v any) string {
 	}
 }
 
-func formatSensorOutput(name string, val any) string {
-	return fmt.Sprintf("%s: %s", name, formatSensorValue(val))
+func formatSensorOutput(name string, sv goodwe.SensorValue) string {
+	valStr := formatSensorValue(sv.Value)
+	if sv.Unit != "" {
+		return fmt.Sprintf("%s: %s %s", name, valStr, sv.Unit)
+	}
+	return fmt.Sprintf("%s: %s", name, valStr)
 }
 
 func main() {
-	// Define flags
 	ip := flag.String("ip", "", "IP address of the GoodWe inverter")
 	pollInterval := flag.Duration("poll", 0, "Polling interval (e.g., 5s, 1m). If 0, polling is disabled.")
 	readSensor := flag.String("readsensor", "", "Name of the specific sensor to read and exit.")
 	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
 	flag.Parse()
 
-	// Setup slog
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	// Validate input
 	if *ip == "" {
 		fmt.Println("Error: -ip is required")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	// Handle list sensors request
 	if *listSensors {
 		sensors := et.GetSensorNames()
 		sort.Strings(sensors)
@@ -86,11 +87,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Setup context with cancellation on signal
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Listen for interrupt signals to shut down gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -102,14 +101,12 @@ func main() {
 	slog.Info("Initializing connection", "ip", *ip)
 	inverter := et.New(*ip)
 
-	// 1. Connect
 	if err := inverter.Connect(ctx); err != nil {
 		slog.Error("Failed to connect", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("Connected successfully")
 
-	// Ensure cleanup happens
 	defer func() {
 		slog.Info("Closing connection...")
 		if err := inverter.Close(); err != nil {
@@ -119,7 +116,6 @@ func main() {
 		}
 	}()
 
-	// 2. Get Device Info
 	slog.Info("--- Device Information ---")
 	info, err := inverter.GetInfo(ctx)
 	if err != nil {
@@ -128,7 +124,6 @@ func main() {
 		slog.Info("Device Info", "model", info.Model, "serial", info.SerialNumber, "firmware", info.Firmware)
 	}
 
-	// 3. Handle specific sensor read request
 	if *readSensor != "" {
 		slog.Info("Single sensor read requested", "sensor", *readSensor)
 		sensors, err := inverter.GetSensors(ctx)
@@ -145,7 +140,6 @@ func main() {
 		}
 	}
 
-	// 4. Polling loop (only if -poll is provided)
 	if *pollInterval > 0 {
 		slog.Info("--- Starting sensor polling", "interval", pollInterval)
 		fmt.Println("Press Ctrl+C to stop.")

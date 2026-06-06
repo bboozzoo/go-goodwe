@@ -70,14 +70,18 @@ func (s *service) probe(ctx context.Context) (*probeResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial UDP: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Warn("Failed to close UDP probe connection", "error", err)
+		}
+	}()
 
 	// Set deadline based on context
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(5 * time.Second)
 	}
-	conn.SetDeadline(deadline)
+	_ = conn.SetDeadline(deadline)
 
 	_, err = conn.Write(probeMsg)
 	if err != nil {
@@ -173,7 +177,7 @@ func calculateCRC16(data []byte) uint16 {
 }
 
 // readModbusBulk performs a single Modbus bulk register read over the DTLS connection using RTU framing.
-func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity uint16) ([]uint16, error) {
+func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity uint16) ([]byte, error) {
 	if s.dtlsConn == nil {
 		return nil, errors.New("no DTLS connection established")
 	}
@@ -211,8 +215,8 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 }
 
 // parseModbusBulkResponse parses a raw Modbus RTU response (with aa55 pre-header)
-// and returns the register values as a []uint16.
-func parseModbusBulkResponse(responseBytes []byte) ([]uint16, error) {
+// and returns the raw register data bytes.
+func parseModbusBulkResponse(responseBytes []byte) ([]byte, error) {
 	n := len(responseBytes)
 	if n < 7 {
 		return nil, fmt.Errorf("modbus response too short: %d bytes", n)
@@ -238,12 +242,7 @@ func parseModbusBulkResponse(responseBytes []byte) ([]uint16, error) {
 		return nil, fmt.Errorf("incomplete modbus data: expected %d bytes, got %d", 5+byteCount+2, n)
 	}
 
-	results := make([]uint16, byteCount/2)
-	for i := 0; i < len(results); i++ {
-		results[i] = binary.BigEndian.Uint16(responseBytes[5+(i*2) : 5+(i*2)+2])
-	}
-
-	return results, nil
+	return responseBytes[5 : 5+byteCount], nil
 }
 
 func (s *service) close() error {
