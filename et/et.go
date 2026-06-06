@@ -178,6 +178,36 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 	return results, nil
 }
 
+// ReadSensor reads a single sensor by name, reading only the minimal register block.
+func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.SensorValue, error) {
+	sb, ok := sensorLookup[name]
+	if !ok {
+		return goodwe.SensorValue{}, fmt.Errorf("unknown sensor: %s", name)
+	}
+
+	data, err := e.service.readModbusBulk(ctx, sb.startReg, sb.readQty)
+	if err != nil {
+		// Meter supports fallback: try smaller read sizes
+		if sb.block == blockMeter && isIllegalDataAddress(err) {
+			if sb.readQty >= 125 {
+				data, err = e.service.readModbusBulk(ctx, sb.startReg, 58)
+			}
+			if err != nil && isIllegalDataAddress(err) && sb.readQty >= 58 {
+				data, err = e.service.readModbusBulk(ctx, sb.startReg, 45)
+			}
+		}
+	}
+	if err != nil {
+		return goodwe.SensorValue{}, fmt.Errorf("failed to read sensor %s: %w", name, err)
+	}
+
+	return goodwe.SensorValue{
+		Value: sb.def.Calculator(data),
+		Unit:  sb.def.Unit,
+		Name:  sb.def.Name,
+	}, nil
+}
+
 // isIllegalDataAddress checks if a Modbus error is ILLEGAL_DATA_ADDRESS (0x02).
 func isIllegalDataAddress(err error) bool {
 	return strings.Contains(err.Error(), "exception 0x02")

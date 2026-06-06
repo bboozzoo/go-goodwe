@@ -39,6 +39,40 @@ const (
 	undef64 uint64 = 0xFFFFFFFFFFFFFFFF
 )
 
+type blockType int
+
+const (
+	blockMain blockType = iota
+	blockBattery
+	blockMeter
+	blockMPPT
+)
+
+type sensorBlock struct {
+	block    blockType
+	startReg uint16
+	readQty  uint16
+	def      sensorDefinition
+}
+
+var sensorLookup map[string]sensorBlock
+
+func init() {
+	sensorLookup = make(map[string]sensorBlock)
+	for name, def := range registry {
+		sensorLookup[name] = sensorBlock{block: blockMain, startReg: 35100, readQty: 125, def: def}
+	}
+	for name, def := range batteryRegistry {
+		sensorLookup[name] = sensorBlock{block: blockBattery, startReg: 37000, readQty: 24, def: def}
+	}
+	for name, def := range meterRegistry {
+		sensorLookup[name] = sensorBlock{block: blockMeter, startReg: 36000, readQty: 125, def: def}
+	}
+	for name, def := range mpptRegistry {
+		sensorLookup[name] = sensorBlock{block: blockMPPT, startReg: 35301, readQty: 61, def: def}
+	}
+}
+
 type sensorDefinition struct {
 	Name       string
 	Unit       string

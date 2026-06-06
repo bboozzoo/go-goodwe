@@ -49,4 +49,5 @@ type Inverter interface {
 	Close() error
 	GetInfo(ctx context.Context) (*Info, error)
 	GetSensors(ctx context.Context) (map[string]SensorValue, error)
+	ReadSensor(ctx context.Context, name string) (SensorValue, error)
 }

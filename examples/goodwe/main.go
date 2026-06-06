@@ -126,18 +126,13 @@ func main() {
 
 	if *readSensor != "" {
 		slog.Info("Single sensor read requested", "sensor", *readSensor)
-		sensors, err := inverter.GetSensors(ctx)
+		val, err := inverter.ReadSensor(ctx, *readSensor)
 		if err != nil {
-			slog.Error("Failed to read sensors", "error", err)
+			slog.Error("Failed to read sensor", "error", err)
 			os.Exit(1)
 		}
-		if val, ok := sensors[*readSensor]; ok {
-			fmt.Println(formatSensorOutput(*readSensor, val))
-			os.Exit(0)
-		} else {
-			slog.Error("Sensor not found", "sensor", *readSensor)
-			os.Exit(1)
-		}
+		fmt.Println(formatSensorOutput(*readSensor, val))
+		os.Exit(0)
 	}
 
 	if *pollInterval > 0 {
