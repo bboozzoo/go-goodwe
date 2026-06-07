@@ -50,29 +50,26 @@ func New(ip string) *ETInverter {
 	}
 }
 
-// TODO connect policy - auto reconnect, e.g.:
-//
-//	type ConnectionConfiguration {
-//	    ReconnectOnError bool // if true
-//	}
 func (e *ETInverter) Connect(ctx context.Context) error {
-	var probeRes *probeResult
 	err := backoff(ctx, func() error {
-		var pErr error
-		probeRes, pErr = e.service.probe(ctx)
-		return pErr
+		// Close any previous connection before retry
+		if e.service.dtlsConn != nil {
+			if cerr := e.service.close(); cerr != nil {
+				slog.Warn("Error closing previous connection", "error", cerr)
+			}
+		}
+
+		probeRes, pErr := e.service.probe(ctx)
+		if pErr != nil {
+			return pErr
+		}
+
+		e.serial = probeRes.SerialNumber
+
+		return e.service.connectDTLS(ctx, probeRes.DTLSPort)
 	})
-
 	if err != nil {
-		return fmt.Errorf("connection failed during probe: %w", err)
-	}
-
-	e.serial = probeRes.SerialNumber
-
-	// TODO retry here as well?
-	err = e.service.connectDTLS(ctx, probeRes.DTLSPort)
-	if err != nil {
-		return fmt.Errorf("connection failed during DTLS handshake: %w", err)
+		return fmt.Errorf("connection failed: %w", err)
 	}
 
 	return nil
