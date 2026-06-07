@@ -47,6 +47,7 @@ Go implementation of a GoodWe inverter library with full sensor coverage matchin
 - [x] `ReadSensor(ctx, name)` for minimal per-block reads
 - [x] Auto-reconnect on Modbus read failures
 - [x] Busy probe response handling (`@busy` detection + longer backoff)
+- [x] `Connect()` retries both probe + DTLS handshake with backoff
 
 ### Device Info
 - [x] Read device info block (register 35000, 33 regs) for real model/firmware/serial/rated_power
@@ -59,19 +60,25 @@ Go implementation of a GoodWe inverter library with full sensor coverage matchin
 
 Data already within existing read windows or small isolated changes.
 
+### Register Constants (`et/et.go:120-124`)
+- [ ] Replace magic numbers (35100, 37000, 36000, 35301, 125, 24, 61, etc.) with named package-level constants
+
+### Slave ID Documentation (`et/service.go:205`)
+- [ ] Document that slave ID 0xF7 is an ET protocol quirk (0x01 requests are ignored)
+
 ### MPPT Block: Missing Sensors (data in 61-reg window, just need registry entries)
 - [ ] Add `pmppt1`..`pmppt8` (MPPT1-8 power, regs 35337-35344) — `uint32Reader(36)`..`uint32Reader(43)`
 - [ ] Add `imppt1`..`imppt8` (MPPT1-8 current, regs 35345-35352) — `uint16Reader(44, 0.1)`..`uint16Reader(51, 0.1)`
 - [ ] Add `reactive_power1`..`reactive_power3` (regs 35353-35357) — `int16Reader`
 - [ ] Add `apparent_power1`..`apparent_power3` (regs 35359-35363) — `int16Reader`
 
-### AA55 Pre-Header — Replace Magic Offsets with Named Constants
+### AA55 Pre-Header — Replace Magic Offsets with Named Constants (`et/service.go:240`)
 - [ ] Define `aa55HeaderLen = 2` constant
 - [ ] Detect AA55 presence rather than assuming it (uncommon but some inverters omit it)
 - [ ] Remove `// TODO better handle fixed 0xaa 0x55 header` comment
 - [ ] Replace `responseBytes[2:n-2]` with named offset constant
 
-### Typed Modbus Error Handling
+### Typed Modbus Error Handling (`et/et.go:274`)
 - [ ] Define sentinel errors: `ErrIllegalDataAddress`, `ErrModbusCRC`, `ErrModbusException`
 - [ ] Return typed errors from `parseModbusBulkResponse()`
 - [ ] Replace `strings.Contains(err.Error(), "exception 0x02")` with `errors.Is(err, ErrIllegalDataAddress)`
@@ -79,6 +86,14 @@ Data already within existing read windows or small isolated changes.
 ---
 
 ## 🎯 Medium-term — Meaningful Features
+
+### Modbus RTU Package (`et/service.go:167,190,207,233`)
+- [ ] Extract CRC16 to a separate `modbus` package
+- [ ] Define `RTU` struct with `SlaveID`, `FunctionCode`, `Data []byte`
+- [ ] `MarshalBinary()` — builds frame + appends CRC16
+- [ ] `UnmarshalBinary()` — validates CRC and returns data
+- [ ] `func (r *RTU) ReadHoldingRegisters(start, quantity uint16)` helper
+- [ ] Use the package in `sendModbusRTUBulkRequest()` and `parseModbusBulkResponse()`
 
 ### Battery2 Block (39000, 22 regs + 35262, 6 regs)
 - [ ] Add `blockBattery2` block type
@@ -132,3 +147,18 @@ Python detects inverter capabilities from serial number:
 - [ ] Document public API in Go doc comments
 - [ ] `int16Reader` does not check for `undef16` (0xFFFF) — consider handling it
 - [ ] `grid_in_out` / `grid_in_out_label` read hardcoded offset 80 which overlaps with `vbattery1` index — extract as named constant
+
+---
+
+## 📁 Code Map
+
+| File | Purpose |
+|---|---|
+| `goodwe.go` | Root interface (`Inverter`, `SensorValue`, `Info`) |
+| `et/et.go` | `ETInverter` — Connect, Close, GetInfo, GetSensors, ReadSensor |
+| `et/service.go` | UDP probe, DTLS handshake, Modbus RTU framing, CRC16 |
+| `et/registry.go` | Sensor definitions, reader helpers, decode bitmap |
+| `et/const.go` | Label dictionaries (PV modes, grid modes, errors, etc.) |
+| `et/resilience.go` | Exponential backoff helper |
+| `et/et_test.go` | Unit tests with sample hex data |
+| `examples/goodwe/main.go` | CLI with `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`
