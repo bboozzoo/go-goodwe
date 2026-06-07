@@ -50,6 +50,11 @@ func New(ip string) *ETInverter {
 	}
 }
 
+// TODO connect policy - auto reconnect, e.g.:
+//
+//	type ConnectionConfiguration {
+//	    ReconnectOnError bool // if true
+//	}
 func (e *ETInverter) Connect(ctx context.Context) error {
 	var probeRes *probeResult
 	err := backoff(ctx, func() error {
@@ -64,6 +69,7 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 
 	e.serial = probeRes.SerialNumber
 
+	// TODO retry here as well?
 	err = e.service.connectDTLS(ctx, probeRes.DTLSPort)
 	if err != nil {
 		return fmt.Errorf("connection failed during DTLS handshake: %w", err)
@@ -114,6 +120,11 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 }
 
 func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
+	// TODO 35100, 37000 need to be named constants
+	// TODO: 125 here, and 24 around batter need to ba made named constants, e.g.:
+	// BaseRegistersOffset = 35100
+	// BaseRegistersCount = 125
+	// BatteryRegistersOffset = 37000
 	data, err := e.readOnceWithFallback(ctx, 35100, 125)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
@@ -263,6 +274,8 @@ func (e *ETInverter) readOnceWithFallback(ctx context.Context, startReg, quantit
 
 // isIllegalDataAddress checks if a Modbus error is ILLEGAL_DATA_ADDRESS (0x02).
 func isIllegalDataAddress(err error) bool {
+	// TODO should use a proper typed error:
+	// ErrModbusIllegalDataAddress
 	return strings.Contains(err.Error(), "exception 0x02")
 }
 

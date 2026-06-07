@@ -164,6 +164,7 @@ func (s *service) connectDTLS(ctx context.Context, port int) error {
 	return nil
 }
 
+// TODO move this to the modbus package
 // calculateCRC16 calculates the Modbus CRC16 checksum.
 func calculateCRC16(data []byte) uint16 {
 	var crc uint16 = 0xFFFF
@@ -186,10 +187,29 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 		return nil, errors.New("no DTLS connection established")
 	}
 
+	// TODO: create modbus package, we need a struct describing the RTU frame, e.g.
+	// struct RTU {
+	//     Slave uint8
+	//     FunctionCode uint8
+	//     Data []byte   // 0-255 bytes
+	//}
+	//
+	//there should be a MarshalBinary() and UnmarshalBinary methods on the
+	//frame. MarshalBinary() should append CRC16 at the end. Unmarshal binary
+	//should verify the CRC and return an error if there is an error. THere
+	//needs to be a named error.
+	//
 	// Modbus RTU over DTLS:
 	// Slave ID (1) | Function Code (1) | Register Address (2) | Quantity (2) | CRC (2)
 	request := make([]byte, 8)
+	// TODO: slave ID needs to be documented as protocol quirk of ET inverter
 	request[0] = 0xF7 // Slave ID 247
+	// TODO: the RTU frame struct could have a method e.g.:
+	//
+	// ReadHoldingRegisters configures the RTU frame with values appropriate for
+	// Read Holding Registers function with a given starting register and their
+	// quantity.
+	// func (r *RTU) ReadHoldingRegisters(start, quantity)
 	request[1] = 0x03 // Function Code (Read Holding Registers)
 	binary.BigEndian.PutUint16(request[2:4], startReg)
 	binary.BigEndian.PutUint16(request[4:6], quantity)
@@ -210,6 +230,12 @@ func (s *service) readModbusBulk(ctx context.Context, startReg uint16, quantity 
 	if err != nil {
 		return nil, fmt.Errorf("modbus read error: %w", err)
 	}
+	// TODO and now:
+	// assert header is 0xaa 0x55, and then:
+	// var frame modbus.RTU
+	// if err := frame.UnmarshalBinary(respBuf[2:]); err != nil {
+	//    return fmt.Errorf("received invalid frame")
+	// }
 
 	// TODO better handle fixed 0xaa 0x55 header
 	responseBytes := respBuf[:n]
