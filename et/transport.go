@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2026, Maciej Borzecki <maciek.borzecki@gmail.com>
+// Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -27,20 +27,19 @@
 
 package et
 
-import (
-	"errors"
-)
+import "context"
 
-var (
-	ErrNotConnected   = errors.New("inverter not connected")
-	ErrProbeFailed    = errors.New("inverter probe failed")
-	ErrDTLSHandshake  = errors.New("dtls handshake failed")
-	ErrModbusRequest  = errors.New("modbus request failed")
-	ErrSensorNotFound = errors.New("requested sensor not found in registry")
-)
+// Transport handles low-level communication with an inverter over a specific
+// transport protocol (e.g. DTLS with Modbus RTU framing, or TCP with Modbus
+// TCP framing).
+type Transport interface {
+	// Connect establishes the connection to the inverter.
+	Connect(ctx context.Context) error
 
-// internal probe response structure
-type probeResult struct {
-	SerialNumber string
-	DTLSPort     int
+	// Close closes the connection.
+	Close() error
+
+	// ReadRegisters performs a Modbus read holding registers request for the
+	// given starting register and quantity, returning the raw register data bytes.
+	ReadRegisters(ctx context.Context, startReg, quantity uint16) ([]byte, error)
 }

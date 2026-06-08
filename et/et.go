@@ -38,35 +38,39 @@ import (
 )
 
 type ETInverter struct {
-	ip      string
-	serial  string
-	service *service
+	ip        string
+	serial    string
+	transport Transport
 }
 
+// New creates a new ETInverter with the given IP address.
+// The transport will be determined lazily; users should generally use
+// discovery.Discover() instead of calling New directly.
 func New(ip string) *ETInverter {
 	return &ETInverter{
-		ip:      ip,
-		service: newService(ip),
+		ip: ip,
+	}
+}
+
+// NewWithTransport creates a new ETInverter with a pre-configured transport.
+func NewWithTransport(serial string, transport Transport) *ETInverter {
+	return &ETInverter{
+		serial:    serial,
+		transport: transport,
 	}
 }
 
 func (e *ETInverter) Connect(ctx context.Context) error {
+	if e.transport == nil {
+		return fmt.Errorf("no transport configured: use discovery.Discover() instead of New()")
+	}
 	err := backoff(ctx, func() error {
 		// Close any previous connection before retry
-		if e.service.dtlsConn != nil {
-			if cerr := e.service.close(); cerr != nil {
-				slog.Warn("Error closing previous connection", "error", cerr)
-			}
+		if cerr := e.transport.Close(); cerr != nil {
+			slog.Warn("Error closing previous connection", "error", cerr)
 		}
 
-		probeRes, pErr := e.service.probe(ctx)
-		if pErr != nil {
-			return pErr
-		}
-
-		e.serial = probeRes.SerialNumber
-
-		return e.service.connectDTLS(ctx, probeRes.DTLSPort)
+		return e.transport.Connect(ctx)
 	})
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
@@ -76,13 +80,16 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 }
 
 func (e *ETInverter) Close() error {
-	return e.service.close()
+	if e.transport == nil {
+		return nil
+	}
+	return e.transport.Close()
 }
 
 // reconnect closes the existing connection and re-establishes it.
 func (e *ETInverter) reconnect(ctx context.Context) error {
 	slog.Info("Reconnecting to inverter...")
-	if err := e.service.close(); err != nil {
+	if err := e.transport.Close(); err != nil {
 		slog.Warn("Error closing existing connection", "error", err)
 	}
 	return e.Connect(ctx)
@@ -93,7 +100,7 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 		SerialNumber: e.serial,
 	}
 
-	data, err := e.service.readModbusBulk(ctx, 35000, 33)
+	data, err := e.transport.ReadRegisters(ctx, 35000, 33)
 	if err != nil {
 		slog.Warn("Failed to read device info registers", "error", err)
 		return info, nil
@@ -144,7 +151,7 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 	}
 
 	// Attempt to read battery info (37000, 24 regs). Skip silently if battery is absent.
-	batteryData, err := e.service.readModbusBulk(ctx, 37000, 24)
+	batteryData, err := e.transport.ReadRegisters(ctx, 37000, 24)
 	if err != nil {
 		// ILLEGAL_DATA_ADDRESS (0x02) means no battery connected
 		if !isIllegalDataAddress(err) {
@@ -167,12 +174,12 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 	}
 
 	// Attempt to read meter data (36000). Try 125 regs, fall back to 58, then 45.
-	meterData, err := e.service.readModbusBulk(ctx, 36000, 125)
+	meterData, err := e.transport.ReadRegisters(ctx, 36000, 125)
 	if err != nil && isIllegalDataAddress(err) {
-		meterData, err = e.service.readModbusBulk(ctx, 36000, 58)
+		meterData, err = e.transport.ReadRegisters(ctx, 36000, 58)
 	}
 	if err != nil && isIllegalDataAddress(err) {
-		meterData, err = e.service.readModbusBulk(ctx, 36000, 45)
+		meterData, err = e.transport.ReadRegisters(ctx, 36000, 45)
 	}
 	if err != nil {
 		slog.Warn("Failed to read meter data", "error", err)
@@ -193,7 +200,7 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 	}
 
 	// Read MPPT data (35301, 61 regs). Skip silently if unavailable.
-	mpptData, err := e.service.readModbusBulk(ctx, 35301, 61)
+	mpptData, err := e.transport.ReadRegisters(ctx, 35301, 61)
 	if err != nil {
 		if !isIllegalDataAddress(err) {
 			slog.Warn("Failed to read MPPT data", "error", err)
@@ -238,9 +245,9 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 			if fallbackQty > 0 {
 				// No reconnect here — the connection is fine, inverter just doesn't
 				// support this many registers.
-				data, err = e.service.readModbusBulk(ctx, sb.startReg, fallbackQty)
+				data, err = e.transport.ReadRegisters(ctx, sb.startReg, fallbackQty)
 				if err != nil && isIllegalDataAddress(err) && fallbackQty == 58 {
-					data, err = e.service.readModbusBulk(ctx, sb.startReg, 45)
+					data, err = e.transport.ReadRegisters(ctx, sb.startReg, 45)
 				}
 			}
 		}
@@ -258,13 +265,13 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 
 // readOnceWithFallback tries a bulk read, reconnecting once on connection errors.
 func (e *ETInverter) readOnceWithFallback(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
-	data, err := e.service.readModbusBulk(ctx, startReg, quantity)
+	data, err := e.transport.ReadRegisters(ctx, startReg, quantity)
 	if err != nil && !isIllegalDataAddress(err) {
 		slog.Warn("Modbus read failed, attempting reconnect", "error", err)
 		if rerr := e.reconnect(ctx); rerr != nil {
 			return nil, fmt.Errorf("reconnect failed: %w (original error: %v)", rerr, err)
 		}
-		data, err = e.service.readModbusBulk(ctx, startReg, quantity)
+		data, err = e.transport.ReadRegisters(ctx, startReg, quantity)
 	}
 	return data, err
 }

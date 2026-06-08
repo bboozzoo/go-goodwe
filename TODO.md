@@ -54,17 +54,23 @@ Go implementation of a GoodWe inverter library with full sensor coverage matchin
 - [x] `decodeGoodweString()` helper for UTF-16BE/ASCII auto-detection
 - [x] `GetInfo()` returns populated `RatedPower`, `DSPVersion`, `ARMVersion` fields
 
+### Discovery & Transport Architecture
+- [x] `Transport` interface (Connect, Close, ReadRegisters)
+- [x] `dtlsTransport` — DTLS + Modbus RTU framing (extracted from old service.go)
+- [x] `tcpTransport` — plain TCP + Modbus TCP framing (MBAP header, no CRC)
+- [x] `discovery.Discover()` — probes UDP:48899, detects DTLS vs TCP, creates correct transport
+- [x] `goodwe.ErrUnsupported` — returned when inverter model is not recognized
+- [x] Model tag matching from Python reference (KEU, KET, ETT, EHB, etc.)
+- [x] CLI uses `discovery.Discover()` instead of `et.New() + Connect()`
+
 ---
 
 ## 📋 Short-term — Easy Wins
 
 Data already within existing read windows or small isolated changes.
 
-### Register Constants (`et/et.go:120-124`)
+### Register Constants (`et/et.go:122-126`)
 - [ ] Replace magic numbers (35100, 37000, 36000, 35301, 125, 24, 61, etc.) with named package-level constants
-
-### Slave ID Documentation (`et/service.go:205`)
-- [ ] Document that slave ID 0xF7 is an ET protocol quirk (0x01 requests are ignored)
 
 ### MPPT Block: Missing Sensors (data in 61-reg window, just need registry entries)
 - [ ] Add `pmppt1`..`pmppt8` (MPPT1-8 power, regs 35337-35344) — `uint32Reader(36)`..`uint32Reader(43)`
@@ -72,13 +78,11 @@ Data already within existing read windows or small isolated changes.
 - [ ] Add `reactive_power1`..`reactive_power3` (regs 35353-35357) — `int16Reader`
 - [ ] Add `apparent_power1`..`apparent_power3` (regs 35359-35363) — `int16Reader`
 
-### AA55 Pre-Header — Replace Magic Offsets with Named Constants (`et/service.go:240`)
-- [ ] Define `aa55HeaderLen = 2` constant
+### AA55 Pre-Header — Replace Magic Offsets with Named Constants (`et/dtls_transport.go`)
 - [ ] Detect AA55 presence rather than assuming it (uncommon but some inverters omit it)
-- [ ] Remove `// TODO better handle fixed 0xaa 0x55 header` comment
-- [ ] Replace `responseBytes[2:n-2]` with named offset constant
+- [ ] Define `aa55HeaderLen = 2` constant and use named offset constants
 
-### Typed Modbus Error Handling (`et/et.go:274`)
+### Typed Modbus Error Handling (`et/et.go:275`)
 - [ ] Define sentinel errors: `ErrIllegalDataAddress`, `ErrModbusCRC`, `ErrModbusException`
 - [ ] Return typed errors from `parseModbusBulkResponse()`
 - [ ] Replace `strings.Contains(err.Error(), "exception 0x02")` with `errors.Is(err, ErrIllegalDataAddress)`
@@ -87,13 +91,13 @@ Data already within existing read windows or small isolated changes.
 
 ## 🎯 Medium-term — Meaningful Features
 
-### Modbus RTU Package (`et/service.go:167,190,207,233`)
+### Modbus RTU Package (`et/dtls_transport.go`)
 - [ ] Extract CRC16 to a separate `modbus` package
 - [ ] Define `RTU` struct with `SlaveID`, `FunctionCode`, `Data []byte`
 - [ ] `MarshalBinary()` — builds frame + appends CRC16
 - [ ] `UnmarshalBinary()` — validates CRC and returns data
 - [ ] `func (r *RTU) ReadHoldingRegisters(start, quantity uint16)` helper
-- [ ] Use the package in `sendModbusRTUBulkRequest()` and `parseModbusBulkResponse()`
+- [ ] Use the package in dtlsTransport and tcpTransport
 
 ### Battery2 Block (39000, 22 regs + 35262, 6 regs)
 - [ ] Add `blockBattery2` block type
@@ -134,8 +138,8 @@ Python detects inverter capabilities from serial number:
 - [ ] Support ARM FW 19 vs 22 variant settings
 
 ### TCP Port 502 Support
-- [ ] Add cleartext Modbus TCP transport (alternative to UDP+DTLS)
-- [ ] Auto-detect: try DTLS discovery first, fall back to port 502
+- [x] Basic Modbus TCP transport via `tcpTransport` (MBAP framing, no CRC)
+- [ ] Auto-detect DTLS vs TCP in discovery (done) and handle fallback between transports
 
 ---
 
@@ -153,10 +157,13 @@ Python detects inverter capabilities from serial number:
 ## 📁 Code Map
 
 | File | Purpose |
-|---|---|
-| `goodwe.go` | Root interface (`Inverter`, `SensorValue`, `Info`) |
+|---|---|---|
+| `goodwe.go` | Root interface (`Inverter`, `SensorValue`, `Info`), `ErrUnsupported` |
+| `discovery/discover.go` | `Discover()` — probes inverter, detects transport, returns `Inverter` |
 | `et/et.go` | `ETInverter` — Connect, Close, GetInfo, GetSensors, ReadSensor |
-| `et/service.go` | UDP probe, DTLS handshake, Modbus RTU framing, CRC16 |
+| `et/transport.go` | `Transport` interface (Connect, Close, ReadRegisters) |
+| `et/dtls_transport.go` | DTLS + Modbus RTU framing, CRC16 |
+| `et/tcp_transport.go` | Plain TCP + Modbus TCP framing (MBAP) |
 | `et/registry.go` | Sensor definitions, reader helpers, decode bitmap |
 | `et/const.go` | Label dictionaries (PV modes, grid modes, errors, etc.) |
 | `et/resilience.go` | Exponential backoff helper |

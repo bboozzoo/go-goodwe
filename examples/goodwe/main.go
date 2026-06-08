@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/bboozzoo/go-goodwe"
+	"github.com/bboozzoo/go-goodwe/discovery"
 	"github.com/bboozzoo/go-goodwe/et"
 )
 
@@ -113,8 +114,12 @@ func main() {
 		cancel()
 	}()
 
-	slog.Info("Initializing connection", "ip", *ip)
-	inverter := et.New(*ip)
+	slog.Info("Discovering inverter", "ip", *ip)
+	inverter, err := discovery.Discover(ctx, *ip)
+	if err != nil {
+		slog.Error("Failed to discover inverter", "error", err)
+		os.Exit(1)
+	}
 
 	if err := inverter.Connect(ctx); err != nil {
 		slog.Error("Failed to connect", "error", err)

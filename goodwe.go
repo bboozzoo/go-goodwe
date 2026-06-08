@@ -27,7 +27,13 @@
 
 package goodwe
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrUnsupported is returned when an inverter model is not supported.
+var ErrUnsupported = errors.New("unsupported inverter")
 
 // SensorValue holds a single sensor reading with metadata.
 type SensorValue struct {
