@@ -30,6 +30,7 @@ package et
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -319,6 +320,7 @@ func isIllegalDataAddress(err error) bool {
 
 // decodeGoodweString decodes a GoodWe device info string field.
 // Mirrors Python's _decode(): UTF-16BE if any byte < 0x20, otherwise ASCII.
+// If ASCII decoding produces non-printable bytes, returns hex encoding.
 func decodeGoodweString(data []byte) string {
 	hasLow := false
 	for _, b := range data {
@@ -338,5 +340,12 @@ func decodeGoodweString(data []byte) string {
 		}
 		return strings.TrimRight(string(runes), " \t\n\r\x00")
 	}
-	return strings.TrimRight(string(data), " \t\n\r\x00")
+	s := string(data)
+	// Check if all bytes are printable ASCII
+	for _, b := range data {
+		if b < 32 || b > 126 {
+			return hex.EncodeToString(data)
+		}
+	}
+	return strings.TrimRight(s, " \t\n\r\x00")
 }

@@ -30,6 +30,7 @@ package et
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -761,5 +762,211 @@ func TestMpptSensors_GW20K(t *testing.T) {
 			require.True(t, ok, "mppt sensor %q should return float64, got %T", tc.name, sv)
 			assert.InDelta(t, tc.want, f, 0.01, "%s", tc.name)
 		})
+	}
+}
+
+// deviceInfoTest represents expected device info fields from the Python reference.
+type deviceInfoTest struct {
+	hexFile      string
+	modelName    string
+	serialNumber string
+	ratedPower   int
+	modbusVer    int
+	acOutputType int
+	dsp1         int
+	dsp2         int
+	arm          int
+	firmware     string
+	armFirmware  string
+}
+
+func parseDeviceInfoData(t *testing.T, name string) []byte {
+	t.Helper()
+	raw := loadSampleHex(t, name)
+	data, err := parseModbusBulkResponse(raw)
+	require.NoError(t, err, "parseModbusBulkResponse(%s)", name)
+	require.Len(t, data, 66, "expected 66 bytes (33 registers)")
+	return data
+}
+
+func TestDeviceInfoFromPythonSamples(t *testing.T) {
+	// Test data and expected values from the Python reference library
+	// https://github.com/marcelblijleven/goodwe (MIT License)
+	tests := []deviceInfoTest{
+		{
+			hexFile:      "GW10K-ET_device_info_fw617.hex",
+			modelName:    "GW10K-ET",
+			serialNumber: "9010KETU000W0000",
+			ratedPower:   10000,
+			modbusVer:    1,
+			acOutputType: 254,
+			dsp1:         6, dsp2: 6, arm: 17,
+			firmware:    "04029-06-S11",
+			armFirmware: "02041-17-S00",
+		},
+		{
+			hexFile:      "GW10K-ET_device_info_fw819.hex",
+			modelName:    "0GW10K-ET",
+			serialNumber: "9010KETU00000000",
+			ratedPower:   10000,
+			modbusVer:    1,
+			acOutputType: 254,
+			dsp1:         8, dsp2: 8, arm: 19,
+			firmware:    "04029-08-S11",
+			armFirmware: "02041-19-S00",
+		},
+		{
+			hexFile:      "GW10K-ET_device_info_fw1023.hex",
+			modelName:    "GW10K-ET",
+			serialNumber: "9010KETU000W0000",
+			ratedPower:   10000,
+			modbusVer:    2,
+			acOutputType: 254,
+			dsp1:         10, dsp2: 10, arm: 23,
+			firmware:    "04029-10-S11",
+			armFirmware: "02041-23-S00",
+		},
+		{
+			hexFile:      "GW20K-ET_device_info.hex",
+			modelName:    "",
+			serialNumber: "9020KETT232W0000",
+			ratedPower:   20000,
+			modbusVer:    0,
+			acOutputType: 1,
+			dsp1:         6, dsp2: 6, arm: 8,
+			firmware:    "04062-08-S00",
+			armFirmware: "02020-10-S01",
+		},
+		{
+			hexFile:      "GW25K-ET_device_info.hex",
+			modelName:    "",
+			serialNumber: "9025KETT00000000",
+			ratedPower:   25000,
+			modbusVer:    0,
+			acOutputType: 1,
+			dsp1:         6, dsp2: 6, arm: 8,
+			firmware:    "04062-",
+			armFirmware: "02020-08-S01",
+		},
+		{
+			hexFile:      "GW29K9-ET_device_info.hex",
+			modelName:    "",
+			serialNumber: "929K9ETT00CW0000",
+			ratedPower:   29900,
+			modbusVer:    0,
+			acOutputType: 1,
+			dsp1:         2, dsp2: 2, arm: 3,
+			firmware:    "04062-",
+			armFirmware: "02020-03-S01",
+		},
+		{
+			hexFile:      "GW6000_EH_device_info.hex",
+			modelName:    "GW6000-EH",
+			serialNumber: "00000EHU00000000",
+			ratedPower:   6000,
+			modbusVer:    0,
+			acOutputType: 254,
+			dsp1:         3, dsp2: 3, arm: 16,
+			firmware:    "04034-03-S10",
+			armFirmware: "02041-16-S00",
+		},
+		{
+			hexFile:      "GW6000-ES-20_device_info.hex",
+			modelName:    "GW6000ES20",
+			serialNumber: "56000ESN00AW0000",
+			ratedPower:   6050,
+			modbusVer:    121,
+			acOutputType: 0,
+			dsp1:         2, dsp2: 2, arm: 5,
+			firmware:    "ffffffffffffffffffffffff",
+			armFirmware: "02020-05-S01",
+		},
+		{
+			hexFile:      "GW5K-BT_device_info.hex",
+			modelName:    "GW5K-BT",
+			serialNumber: "95000BTU203W0000",
+			ratedPower:   5000,
+			modbusVer:    0,
+			acOutputType: 254,
+			dsp1:         3, dsp2: 3, arm: 11,
+			firmware:    "04029-03-S10",
+			armFirmware: "02041-11-S00",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.hexFile, func(t *testing.T) {
+			data := parseDeviceInfoData(t, tc.hexFile)
+
+			// Register-level fields
+			assert.Equal(t, tc.modbusVer, int(binary.BigEndian.Uint16(data[0:2])), "modbus_version")
+			assert.Equal(t, tc.ratedPower, int(binary.BigEndian.Uint16(data[2:4])), "rated_power")
+			assert.Equal(t, tc.acOutputType, int(binary.BigEndian.Uint16(data[4:6])), "ac_output_type")
+
+			// String fields
+			assert.Equal(t, tc.serialNumber, decodeGoodweString(data[6:22]), "serial_number")
+			assert.Equal(t, tc.modelName, decodeGoodweString(data[22:32]), "model_name")
+			assert.Equal(t, tc.firmware, decodeGoodweString(data[42:54]), "firmware")
+			assert.Equal(t, tc.armFirmware, decodeGoodweString(data[54:66]), "arm_firmware")
+
+			// Version fields (uint16)
+			assert.Equal(t, tc.dsp1, int(binary.BigEndian.Uint16(data[32:34])), "dsp1_version")
+			assert.Equal(t, tc.dsp2, int(binary.BigEndian.Uint16(data[34:36])), "dsp2_version")
+			assert.Equal(t, tc.arm, int(binary.BigEndian.Uint16(data[38:40])), "arm_version")
+		})
+	}
+}
+
+func TestDeviceInfoVersionFallback(t *testing.T) {
+	// Synthetic test: simulate an inverter where the uint16 version fields are
+	// zero but the firmware strings contain version information.
+	// Pattern observed on Solar-5015KET (TCP inverter).
+	data := make([]byte, 66)
+
+	binary.BigEndian.PutUint16(data[2:4], 15000) // rated_power
+	copy(data[6:22], []byte("5015KETT246L0592")) // serial
+	copy(data[42:54], []byte("04062-07-S00"))    // firmware
+	copy(data[54:66], []byte("02071-13-439"))    // arm_firmware
+
+	// dsp1/dsp2/arm at offsets 32,34,38 are zero → triggers fallback
+
+	model := decodeGoodweString(data[22:32])
+	assert.Equal(t, "", model, "model_name should be empty")
+
+	firmware := decodeGoodweString(data[42:54])
+	assert.Equal(t, "04062-07-S00", firmware)
+
+	armFirmware := decodeGoodweString(data[54:66])
+	assert.Equal(t, "02071-13-439", armFirmware)
+
+	// Verify fallback DSP parsing
+	dsp1 := binary.BigEndian.Uint16(data[32:34])
+	dsp2 := binary.BigEndian.Uint16(data[34:36])
+	assert.Equal(t, uint16(0), dsp1)
+	assert.Equal(t, uint16(0), dsp2)
+	if dsp1 == 0 && dsp2 == 0 {
+		parts := strings.SplitN(firmware, "-", 3)
+		if len(parts) >= 2 {
+			assert.Equal(t, "07", parts[1], "DSP from firmware fallback")
+		}
+	}
+
+	// Verify fallback ARM parsing
+	arm := binary.BigEndian.Uint16(data[38:40])
+	assert.Equal(t, uint16(0), arm)
+	if arm == 0 {
+		parts := strings.SplitN(armFirmware, "-", 3)
+		if len(parts) >= 2 {
+			assert.Equal(t, "13", parts[1], "ARM from arm_firmware fallback")
+		}
+	}
+
+	// Verify model derived from rated power
+	ratedPower := int(binary.BigEndian.Uint16(data[2:4]))
+	if model == "" && ratedPower > 0 {
+		kw := ratedPower / 1000
+		if kw > 0 {
+			assert.Equal(t, "GW15K-ET", fmt.Sprintf("GW%dK-ET", kw), "model from rated_power")
+		}
 	}
 }
