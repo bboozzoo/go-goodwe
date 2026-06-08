@@ -120,6 +120,15 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 	)
 	info.ARMVersion = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[38:40]))
 
+	// Some inverters leave the model_name register field blank.
+	// Derive it from the rated power when available.
+	if info.Model == "" && info.RatedPower > 0 {
+		kw := info.RatedPower / 1000
+		if kw > 0 {
+			info.Model = fmt.Sprintf("GW%dK-ET", kw)
+		}
+	}
+
 	return info, nil
 }
 
