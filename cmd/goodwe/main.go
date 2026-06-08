@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +43,23 @@ import (
 	"github.com/bboozzoo/go-goodwe/discovery"
 	"github.com/bboozzoo/go-goodwe/et"
 )
+
+var version = "dev"
+
+func getVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				rev := s.Value
+				if len(rev) > 7 {
+					rev = rev[:7]
+				}
+				return fmt.Sprintf("%s (%s)", version, rev)
+			}
+		}
+	}
+	return version
+}
 
 func formatSensorValue(v any) string {
 	switch val := v.(type) {
@@ -68,6 +86,7 @@ func main() {
 	readSensor := flag.String("readsensor", "", "Comma-separated sensor names to read (e.g. battery_soc,house_consumption). With -poll, these are polled alongside the timestamp.")
 	listSensors := flag.Bool("listsensors", false, "List all available sensors and exit.")
 	showInfo := flag.Bool("info", false, "Display inverter information and exit.")
+	showVersion := flag.Bool("version", false, "Display version information and exit.")
 	verbose := flag.Bool("verbose", false, "Enable info logging.")
 	debug := flag.Bool("debug", false, "Enable debug logging (implies -verbose).")
 	flag.Parse()
@@ -80,6 +99,11 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
+
+	if *showVersion {
+		fmt.Println(getVersion())
+		os.Exit(0)
+	}
 
 	if *ip == "" {
 		fmt.Println("Error: -ip is required")

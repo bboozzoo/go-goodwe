@@ -1,0 +1,30 @@
+version: 2
+project_name: goodwe
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: goodwe
+    main: ./cmd/goodwe
+    binary: goodwe
+    ldflags:
+      - -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  draft: true
+  prerelease: auto

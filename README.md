@@ -5,7 +5,7 @@ Go package for interacting with GoodWe inverters.
 Build the CLI:
 
 ```sh
-$ go build ./examples/goodwe/
+$ go build ./cmd/goodwe/
 ```
 
 Display inverter info:
