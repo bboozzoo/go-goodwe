@@ -112,13 +112,6 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 
 	info.SerialNumber = decodeGoodweString(data[6:22])
 	info.Model = decodeGoodweString(data[22:32])
-	info.Firmware = decodeGoodweString(data[42:54])
-	info.RatedPower = int(binary.BigEndian.Uint16(data[2:4]))
-	info.DSPVersion = fmt.Sprintf("%d.%d",
-		binary.BigEndian.Uint16(data[32:34]),
-		binary.BigEndian.Uint16(data[34:36]),
-	)
-	info.ARMVersion = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[38:40]))
 
 	// Some inverters leave the model_name register field blank.
 	// Derive it from the rated power when available.
@@ -127,6 +120,38 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 		if kw > 0 {
 			info.Model = fmt.Sprintf("GW%dK-ET", kw)
 		}
+	}
+
+	info.RatedPower = int(binary.BigEndian.Uint16(data[2:4]))
+
+	// Firmware version strings: stored in two 12-byte fields
+	firmware := decodeGoodweString(data[42:54])
+	armFirmware := decodeGoodweString(data[54:66])
+	if firmware != "" && armFirmware != "" {
+		info.Firmware = firmware + armFirmware
+	} else if firmware != "" {
+		info.Firmware = firmware
+	} else {
+		info.Firmware = armFirmware
+	}
+
+	// DSP version: prefer uint16 fields, fall back to parsing from firmware string
+	dsp1 := binary.BigEndian.Uint16(data[32:34])
+	dsp2 := binary.BigEndian.Uint16(data[34:36])
+	if dsp1 > 0 || dsp2 > 0 {
+		info.DSPVersion = fmt.Sprintf("%d.%d", dsp1, dsp2)
+	} else if parts := strings.SplitN(firmware, "-", 3); len(parts) >= 2 {
+		// firmware format: "<sw_id>-<dsp_version>-<suffix>" e.g. "04062-07-S00"
+		info.DSPVersion = parts[1]
+	}
+
+	// ARM version: prefer uint16 field, fall back to parsing from arm_firmware
+	arm := binary.BigEndian.Uint16(data[38:40])
+	if arm > 0 {
+		info.ARMVersion = fmt.Sprintf("%d", arm)
+	} else if parts := strings.SplitN(armFirmware, "-", 3); len(parts) >= 2 {
+		// arm_firmware format: "<sw_id>-<arm_version>-<sub>" e.g. "02071-13-439"
+		info.ARMVersion = parts[1]
 	}
 
 	return info, nil
