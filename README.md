@@ -41,7 +41,7 @@ $ ./goodwe -ip 192.168.100.151 -info -debug
 
 ### Troubleshooting
 
-Identify open ports:
+Identify open ports. Example from a rotuer which only supports RTU over UDP:
 
 ``` sh
 $ sudo nmap -sS -sU -p T:502,U:8899,U:48899 192.168.100.151  # replace with your inverter's IP 
@@ -58,16 +58,35 @@ MAC Address: 28:56:2F:A8:EA:EC (Unknown)
 Nmap done: 1 IP address (1 host up) scanned in 2.28 seconds
 ```
 
-Where:
-- `502/tcp` indicates that the MODBUS TCP port is closed
-- `8899/udp` indicates support for GoodWe MODBUS RTU protocol
-- `48899/udp` indicates support for GoodWe discovery
-
 To query the inverter:
 
 ``` sh
 $ echo -n "WIFIKIT-214028-READ" | nc -u -w 2 192.168.100.151 48899
 dongle@sn,dtls_port:8899,<inverter's SN>
+```
+
+And another inverter which uses WIFI+LAN Kit:
+
+``` sh
+$ sudo nmap -sS -sU -p T:502,U:8899,U:48899 192.168.4.82
+[sudo] password for maciek:
+Starting Nmap 7.95 ( https://nmap.org ) at 2026-06-08 19:40 CEST
+Nmap scan report for GW_WIFILAN_2 (192.168.4.82)
+Host is up (0.074s latency).
+
+PORT      STATE         SERVICE
+502/tcp   open          mbap
+8899/udp  closed        ospf-lite
+48899/udp open|filtered tc_ads_discovery
+
+Nmap done: 1 IP address (1 host up) scanned in 3.36 seconds
+
+```
+
+And the probe:
+```sh
+$ echo -n "WIFIKIT-214028-READ" | nc -u -w 2 192.168.4.82 48899
+ccm@sn,ccm@sn,Solar-<sn>
 ```
 
 ### Links
