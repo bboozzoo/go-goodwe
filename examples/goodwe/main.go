@@ -103,6 +103,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *pollInterval > 0 && *pollInterval < 5*time.Second {
+		fmt.Println("Error: -poll interval must be at least 5s")
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
