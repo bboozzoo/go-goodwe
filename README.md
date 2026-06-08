@@ -39,6 +39,30 @@ $ ./goodwe -ip 192.168.100.151 -info -verbose
 $ ./goodwe -ip 192.168.100.151 -info -debug
 ```
 
+Example info outputs from GW15K-ET and GW10K-ET20 inverters:
+
+``` sh
+$ ./goodwe -ip 192.168.100.82 -info
+Inverter Information:
+  Serial:     <SN>
+  Model:      GW15K-ET
+  Firmware:   04062-07-S0002071-13-439
+  DSP:        07
+  ARM:        13
+  Rated:      15000 W
+  Mode:       Normal (On-Grid)
+
+$ ./goodwe-arm -ip 192.168.100.151 -info
+Inverter Information:
+  Serial:     <SN>
+  Model:      GW10K-ET20
+  Firmware:   04068-05-S1502071-17-449
+  DSP:        05
+  ARM:        6
+  Rated:      12000 W
+  Mode:       Normal (Off-Grid)
+```
+
 ### Troubleshooting
 
 Identify open ports. Example from a rotuer which only supports RTU over UDP:
