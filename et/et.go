@@ -113,6 +113,7 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 
 	info.SerialNumber = decodeGoodweString(data[6:22])
 	info.Model = decodeGoodweString(data[22:32])
+	info.RatedPower = int(binary.BigEndian.Uint16(data[2:4]))
 
 	// Some inverters leave the model_name register field blank.
 	// Derive it from the rated power when available.
@@ -122,8 +123,6 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 			info.Model = fmt.Sprintf("GW%dK-ET", kw)
 		}
 	}
-
-	info.RatedPower = int(binary.BigEndian.Uint16(data[2:4]))
 
 	// Firmware version strings: stored in two 12-byte fields
 	firmware := decodeGoodweString(data[42:54])
