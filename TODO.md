@@ -139,6 +139,225 @@ Data already within existing read windows or small isolated changes.
 
 ## 🚀 Long-term — Major Features
 
+### Daemon Mode with REST API + Dashboard
+
+A persistent daemon that polls the inverter at a configurable interval, stores
+sensor readings in a local SQLite database with time-based aggregation, and
+exposes a REST API + embedded JS dashboard.
+
+#### CLI Flags
+```
+-daemon <address>:<port>  — run in daemon mode, serve API at this address
+-dashboard               — serve the JS dashboard (requires -daemon)
+-dbstore <dsn>           — database connection string (default: sqlite://~/.goodwe/goodwe.db)
+-poll <interval>          — sensor poll interval (default: 30s, min: 5s)
+-ip <ip>                  — required for daemon mode too
+-purge <date>             — one-shot: purge all data older than this date and exit
+```
+
+#### Gap Handling on Restart
+When the daemon starts after a period of downtime (e.g., machine was off),
+the aggregation logic must handle missing hours/days gracefully rather than
+silently skipping them:
+
+1. **On startup**, query the latest `sampled_at` from `sensor_samples`.
+2. **Backfill aggregation** for any completed hour bucket between `latest_sample` and `now`:
+   - For each missed hour: run `RunHourlyAggregation()` for that specific hour bucket.
+   - After hourly backfill: run `RunDailyAggregation()` for each missed day bucket.
+3. **Normal poll loop** then resumes, and subsequent aggregation triggers fire at hour/day boundaries as usual.
+4. **Data integrity check**: The `RunHourlyAggregation` must be idempotent — if an hour bucket
+already has an aggregate row, it should be **updated** (re-aggregated from raw samples for that hour)
+rather than failing on a PRIMARY KEY conflict. Use `INSERT ... ON CONFLICT DO UPDATE`.
+5. **Empty buckets**: If a missed hour has zero raw samples (because the daemon was down),
+the aggregation for that hour should still produce a row with `sample_count=0` and NULL-ish
+values, so the dashboard can show the gap visually. Alternatively, omit the row entirely
+and let the dashboard handle gaps naturally (Chart.js `spanGaps: false`).
+   - **Chosen approach**: Omit empty buckets. The dashboard uses `spanGaps: false` in Chart.js
+     so missing time ranges display as line breaks rather than misleading interpolations.
+
+#### Directory Layout
+```
+cmd/goodwe/               — existing CLI (unchanged)
+cmd/goodwe-daemon/        — new daemon binary
+  main.go                 — flag parsing + daemon orchestration
+pkg/daemon/
+  daemon.go               — poll loop + periodic aggregation
+pkg/db/
+  store.go                — DB interface + SQLite implementation
+  migrations.go           — auto-run schema migrations
+  aggregation.go          — hourly/daily aggregation logic
+pkg/api/
+  handler.go              — HTTP handler + routes
+  middleware.go           — logging, CORS
+pkg/dashboard/
+  (embedded via embed.FS) — static HTML/CSS/JS files
+```
+
+#### Database Schema (SQLite)
+```sql
+CREATE TABLE sensor_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sensor_name TEXT NOT NULL,
+    value REAL,              -- numeric value (NULL for label/string sensors)
+    value_text TEXT,         -- string value (NULL for numeric sensors), e.g. "Normal (On-Grid)"
+    unit TEXT NOT NULL DEFAULT '',
+    sampled_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_samples_name_time ON sensor_samples(sensor_name, sampled_at);
+
+-- Hourly aggregates (retain for 3 months)
+CREATE TABLE sensor_hourly (
+    sensor_name TEXT NOT NULL,
+    hour_bucket TIMESTAMP NOT NULL,
+    min_val REAL NOT NULL,
+    max_val REAL NOT NULL,
+    avg_val REAL NOT NULL,
+    sample_count INTEGER NOT NULL,
+    PRIMARY KEY (sensor_name, hour_bucket)
+);
+
+-- Daily aggregates (retain indefinitely)
+CREATE TABLE sensor_daily (
+    sensor_name TEXT NOT NULL,
+    day_bucket DATE NOT NULL,
+    min_val REAL NOT NULL,
+    max_val REAL NOT NULL,
+    avg_val REAL NOT NULL,
+    sample_count INTEGER NOT NULL,
+    PRIMARY KEY (sensor_name, day_bucket)
+);
+```
+
+#### Data Retention & Aggregation Schedule
+| Granularity | Retention | Aggregation Trigger |
+|-------------|-----------|--------------------|
+| Raw samples | 7 days    | Deleted on each aggregation run |
+| Hourly      | 3 months  | Runs every hour (next_hour_bucket reached) |
+| Daily       | Forever   | Runs at midnight (UTC) |
+
+#### REST API Endpoints
+```
+GET  /api/health                        → {"status":"ok"}
+GET  /api/status                        → current live readings from inverter (all sensors)
+GET  /api/sensors                       → list of sensor names + metadata
+                                           (includes type: "numeric"|"label"|"code"|"bitmap",
+                                            unit, name, has_label_pair, label_for)
+GET  /api/data/{sensor}                 → raw samples (?since=&until=&limit=)
+                                           Label/string sensors return samples with value as string
+GET  /api/data/{sensor}/aggregate       → aggregated (?bucket=hour|day&since=&until=)
+                                           Only available for numeric sensors — returns 400 for labels
+DELETE /api/data/{sensor}               → purge samples older than ?before=<date>
+                                          (omit {sensor} to purge all sensors)
+POST  /api/data/{sensor}/purge          → alternative: JSON body {"before":"2026-01-01"}
+GET  /dashboard                         → serves the embedded JS dashboard
+```
+
+#### Dashboard (Single-page App, Chart.js)
+The dashboard is split into two views:
+
+**Live Status View** (default)
+- Shows all sensors in a key-value table, grouped by category (PV, Grid, Battery, Backup, Meter, etc.)
+- Numeric values shown with unit badges (e.g., `352 V`, `3.2 kW`)
+- Label values shown as human-readable text (e.g., `Normal (On-Grid)`, `Discharge`)
+- Error/bitmap sensors shown as lists of active flags
+- Auto-refreshes every 5s via `/api/status`
+
+**Chart View** (sensor selector)
+- Dropdown populated from `/api/sensors`, **filtered to numeric sensors only**
+  (sensors with `type: "numeric"`). Label/code/bitmap sensors are excluded from charting
+  since they produce string values that don't plot on a line chart.
+- Displays label/code sensors as a separate "Status Indicators" section below the chart
+- Time range selector (1h, 6h, 24h, 7d, 30d)
+- Line chart of selected sensor values, auto-scaled
+- `spanGaps: false` — gaps in data show as line breaks, not interpolated
+- Auto-refresh toggle (polls `/api/data/{sensor}` every N seconds)
+- Shows current live value at the top
+- Responsive, works on mobile
+The dashboard is bundled via `//go:embed` and served as static files.
+No build step required — raw HTML + JS with Chart.js loaded from CDN or vendored.
+
+#### Implementation Steps
+1. **Add SQLite dependency** (`modernc.org/sqlite` — pure Go, no CGO)
+2. **Create `pkg/db/store.go`** — DB interface, SQLite implementation
+   - `Open(path string) (*Store, error)` — opens/creates DB, runs migrations
+   - `InsertSample(ctx, name, value, unit, t time.Time) error` — stores numeric values in `value` column,
+     label/string values in `value_text` column. Determines column based on Go type (float64→REAL, string→TEXT).
+   - `QuerySamples(ctx, name string, since, until time.Time, limit int) ([]Sample, error)`
+     Sample struct: `{Value *float64, ValueText *string, Unit string, SampledAt time.Time}`
+   - `QueryAggregated(ctx, name, bucket string, since, until time.Time) ([]Aggregate, error)`
+     - Only for numeric sensors; returns 0 rows for label sensors
+   - `RunHourlyAggregation(ctx) error` — rolls numeric raw→hourly batch (skips string-value samples)
+   - `RunDailyAggregation(ctx) error` — rolls hourly→daily batch
+   - `PurgeRawSamples(ctx, before time.Time) error` — cleanup old raw data
+   - `PurgeHourlySamples(ctx, before time.Time) error` — cleanup old hourly data
+3. **Create `pkg/daemon/daemon.go`**
+   - `New(ctx, inverter, store, pollInterval) *Daemon`
+   - `Run()` — starts poll loop + aggregation scheduler
+   - On startup: detect latest `sampled_at`, backfill aggregation for any missed hours/days
+   - On each tick: `GetSensors()` → `InsertSample()` for ALL sensors (both numeric and label),
+     storing strings in `value_text` column when value is non-numeric
+   - On hour boundary: `RunHourlyAggregation()` + `PurgeRawSamples()`
+   - On day boundary: `RunDailyAggregation()` + `PurgeHourlySamples()`
+   - Aggregation is idempotent: uses `INSERT ... ON CONFLICT DO UPDATE`
+   - Aggregation only processes numeric sensors (label/code sensors are stored but not aggregated)
+   - Empty hour buckets are omitted (dashboard shows gaps via `spanGaps: false`)
+   - Graceful shutdown on context cancellation
+4. **Create `pkg/api/handler.go`**
+   - `New(store, inverter) *Handler`
+   - Routes registered on `http.ServeMux`
+   - CORS middleware for dashboard access
+   - Live `/api/status` endpoint calls `inverter.GetSensors()` on-the-fly, returns all sensors
+     with their current values, units, and inferred type (numeric/label)
+   - `DELETE /api/data/{sensor}?before=<date>` — purges raw samples older than given date
+   - `POST /api/data/{sensor}/purge` — same, but with JSON body
+   - Both endpoints accept `all` as sensor name to purge everything
+5. **Create `pkg/dashboard/`** with embedded static files
+   - `index.html` — layout + controls
+   - `app.js` — Chart.js based dashboard logic
+   - Embedded via `//go:embed all:static`
+6. **Create `cmd/goodwe-daemon/main.go`**
+   - Parse flags, open DB, discover inverter, create Daemon + API handler
+   - Launch HTTP server + daemon poll loop concurrently
+   - Handle OS signals for graceful shutdown
+7. **Integration with existing code**
+   - The daemon imports `goodwe.Inverter`, `discovery.Discover()`
+   - Reuses the existing transport and sensor infrastructure
+8. **Documentation**
+   - Update `README.md` with daemon usage
+   - Add examples:
+     ```
+     # Default DB location (~/.goodwe/goodwe.db), poll every 15s
+     goodwe-daemon -ip 192.168.1.151 -daemon :8080 -dashboard -poll 15s
+
+     # Custom database path
+     goodwe-daemon -ip 192.168.1.151 -daemon :8080 -dbstore sqlite:///var/lib/goodwe/history.db
+
+     # Purge data older than a specific date
+     goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -purge 2026-01-01
+     ```
+
+#### DSN Format
+The `-dbstore` flag uses a URI scheme to specify the database backend and location:
+
+```
+# Local SQLite file (default)
+sqlite://~/.goodwe/goodwe.db
+sqlite:///data/goodwe/history.db
+
+# Future: could support PostgreSQL, etc.
+postgres://user:pass@host:5432/goodwe?sslmode=disable
+```
+
+The `sqlite://` scheme is parsed to extract the file path. `~` is expanded to `$HOME`.
+The `pkg/db/store.go` `Open(dsn string)` function parses the URI, selects the appropriate
+driver, and returns the `Store` interface. This makes the architecture database-agnostic
+for future backends (e.g., InfluxDB, TimescaleDB) while keeping the first implementation
+simple with SQLite.
+
+#### Dependencies
+- `modernc.org/sqlite` — pure Go SQLite driver (no CGO)
+- No JS dependencies at build time (Chart.js loaded from CDN via <script> tag)
+
 ### Model Detection
 Python detects inverter capabilities from serial number:
 - [ ] `is_single_phase()` / `is_3_phase()`
