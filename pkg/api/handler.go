@@ -32,18 +32,22 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/bboozzoo/go-goodwe"
+	"github.com/bboozzoo/go-goodwe/et"
 )
 
 // Handler serves the REST API endpoints.
 type Handler struct {
-	debug bool
-	mux   http.Handler
+	inverter goodwe.Inverter // may be nil when no inverter is configured
+	debug    bool
+	mux      http.Handler
 }
 
-// New creates an API handler. In the skeleton phase only the health endpoint
-// is wired up. store and inverter parameters will be added later.
-func New(debug bool) *Handler {
-	h := &Handler{debug: debug}
+// New creates an API handler. inverter may be nil; in that case endpoints
+// that require an inverter return a 503 status.
+func New(inverter goodwe.Inverter, debug bool) *Handler {
+	h := &Handler{inverter: inverter, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -56,6 +60,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) buildRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", h.handleHealth)
+	mux.HandleFunc("GET /api/sensors", h.handleListSensors)
+	mux.HandleFunc("GET /api/info", h.handleInfo)
 	mux.HandleFunc("GET /api/", h.handleNotFound)
 	mux.HandleFunc("GET /dashboard", h.handleDashboard)
 
@@ -82,6 +88,69 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Warn("Failed to encode health response", "error", err)
 	}
+}
+
+// sensorEntry is one sensor in the /api/sensors response.
+type sensorEntry struct {
+	Name     string `json:"name"`
+	Category string `json:"category"`
+}
+
+func (h *Handler) handleListSensors(w http.ResponseWriter, r *http.Request) {
+	groups := et.GetSensorNamesByBlock()
+
+	// Order categories deterministically.
+	var sensors []sensorEntry
+	for _, cat := range []string{"Main Telemetry", "Battery", "Meter", "MPPT"} {
+		names, ok := groups[cat]
+		if !ok {
+			continue
+		}
+		for _, name := range names {
+			sensors = append(sensors, sensorEntry{
+				Name:     name,
+				Category: cat,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(sensors); err != nil {
+		slog.Warn("Failed to encode sensors response", "error", err)
+	}
+}
+
+// inverterInfo is the JSON body for GET /api/info.
+type inverterInfo struct {
+	Serial   string `json:"serial"`
+	Model    string `json:"model"`
+	Firmware string `json:"firmware"`
+	Rated    int    `json:"rated_power"`
+	DSP      string `json:"dsp_version"`
+	ARM      string `json:"arm_version"`
+}
+
+func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
+	if h.inverter == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
+		return
+	}
+	info, err := h.inverter.GetInfo(r.Context())
+	if err != nil {
+		slog.Warn("Failed to get inverter info", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to get inverter info")
+		return
+	}
+	resp := inverterInfo{
+		Serial:   info.SerialNumber,
+		Model:    info.Model,
+		Firmware: info.Firmware,
+		Rated:    info.RatedPower,
+		DSP:      info.DSPVersion,
+		ARM:      info.ARMVersion,
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -147,4 +216,18 @@ type loggingResponseWriter struct {
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.status = code
 	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// writeJSON is a helper to write a JSON response.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("Failed to encode JSON response", "error", err)
+	}
+}
+
+// writeJSONError writes a JSON error response.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }

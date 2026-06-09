@@ -40,6 +40,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bboozzoo/go-goodwe"
+	"github.com/bboozzoo/go-goodwe/discovery"
 	"github.com/bboozzoo/go-goodwe/pkg/api"
 	"github.com/bboozzoo/go-goodwe/pkg/daemon"
 )
@@ -62,6 +64,7 @@ func getVersion() string {
 }
 
 const (
+	minPollInterval     = 5 * time.Second
 	shutdownTimeout     = 15 * time.Second
 	httpShutdownTimeout = 10 * time.Second
 )
@@ -70,7 +73,7 @@ func main() {
 	daemonAddr := flag.String("daemon", "", "Address and port for the HTTP API server (e.g. :8080)")
 	dashboard := flag.Bool("dashboard", false, "Enable the embedded JS dashboard at /dashboard")
 	dsn := flag.String("dbstore", "", "Database connection string (e.g. sqlite://~/.goodwe/goodwe.db)")
-	pollInterval := flag.Duration("poll", 0, "Sensor poll interval (e.g. 30s, 1m)")
+	pollInterval := flag.Duration("poll", 0, "Sensor poll interval (e.g. 30s, 1m; minimum 5s)")
 	inverterIP := flag.String("inverterip", "", "IP address of the GoodWe inverter")
 	purgeDate := flag.String("purge", "", "One-shot: purge all data older than this date and exit")
 	debug := flag.Bool("debug", false, "Enable debug logging")
@@ -96,18 +99,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *inverterIP == "" {
-		slog.Warn("No -inverterip specified; daemon will start but sensor polling is disabled")
+	// Enforce minimum poll interval.
+	if *pollInterval > 0 && *pollInterval < minPollInterval {
+		fmt.Printf("Error: -poll interval must be at least %s (got %s)\n", minPollInterval, *pollInterval)
+		os.Exit(1)
 	}
 
 	if *dsn == "" {
 		*dsn = "sqlite://~/.goodwe/goodwe.db"
 	}
 
-	// In the skeleton phase we don't validate the database or poll interval.
-	// These will be wired up in later iterations.
+	// In the skeleton phase we don't use dbstore, dashboard, or purge yet.
 	_ = dsn
-	_ = pollInterval
 	_ = dashboard
 	_ = purgeDate
 
@@ -115,14 +118,30 @@ func main() {
 		"version", getVersion(),
 		"listen", *daemonAddr,
 		"dashboard", *dashboard,
+		"poll", *pollInterval,
 		"debug", *debug,
 	)
 
-	// Create the API handler.
-	handler := api.New(*debug)
+	// Discover and connect to the inverter.
+	var inverter goodwe.Inverter
+	if *inverterIP != "" {
+		slog.Info("Discovering inverter", "ip", *inverterIP)
+		var err error
+		inverter, err = discovery.Discover(context.Background(), *inverterIP)
+		if err != nil {
+			slog.Error("Failed to discover inverter", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Discovered inverter")
+	} else {
+		slog.Warn("No -inverterip specified; sensor endpoints will return 503")
+	}
 
-	// Create the daemon poll loop (skeleton for now).
-	daemon := daemon.New()
+	// Create the API handler with the inverter (may be nil).
+	handler := api.New(inverter, *debug)
+
+	// Create the daemon with the inverter (may be nil).
+	dmn := daemon.New(inverter)
 
 	// Start HTTP server.
 	httpServer := &http.Server{
@@ -149,8 +168,9 @@ func main() {
 
 	// Start daemon poll loop in a goroutine.
 	go func() {
-		if err := daemon.Run(ctx); err != nil {
+		if err := dmn.Run(ctx); err != nil {
 			slog.Error("Daemon error", "error", err)
+			cancel()
 		}
 	}()
 
@@ -175,7 +195,7 @@ func main() {
 
 	// 2. Close daemon resources.
 	slog.Info("Closing daemon...")
-	if err := daemon.Close(); err != nil {
+	if err := dmn.Close(); err != nil {
 		slog.Error("Daemon close error", "error", err)
 	} else {
 		slog.Info("Daemon closed")
