@@ -63,6 +63,27 @@ Go implementation of a GoodWe inverter library with full sensor coverage matchin
 - [x] Model tag matching from Python reference (KEU, KET, ETT, EHB, etc.)
 - [x] CLI uses `discovery.Discover()` instead of `et.New() + Connect()`
 
+### Device Info — Firmware & Model Derivation
+- [x] Model derived from rated power when register field is blank (e.g. `15000W` → `"GW15K-ET"`)
+- [x] DSP version parsed from firmware string fallback (`"04062-07-S00"` → `"07"`)
+- [x] ARM version parsed from arm_firmware string fallback (`"02071-13-439"` → `"13"`)
+- [x] `decodeGoodweString` hex fallback for non-printable bytes (matches Python `_decode`)
+
+### Testing — Device Info
+- [x] 9 ET device info hex files copied from Python reference library (MIT License)
+- [x] `TestDeviceInfoFromPythonSamples` — validates all register fields against Python expected values
+- [x] `TestDeviceInfoVersionFallback` — synthetic test for zero-uint16 version parsing
+
+### CLI Polish
+- [x] `-version` flag — reads `vcs.revision` from `debug.ReadBuildInfo()`
+- [x] Minimum 5s poll interval guardrail (prevents inverter instability)
+- [x] CLI moved from `examples/goodwe/` to `cmd/goodwe/` (Go convention)
+
+### Release Infrastructure
+- [x] `.goreleaser.yaml` — builds linux/darwin amd64+arm64, draft releases
+- [x] `.github/workflows/ci.yml` — test + lint + snapshot build on master push
+- [x] `.github/workflows/release.yml` — goreleaser on `v*.*.*` tag push
+
 ---
 
 ## 📋 Short-term — Easy Wins
@@ -168,4 +189,7 @@ Python detects inverter capabilities from serial number:
 | `et/const.go` | Label dictionaries (PV modes, grid modes, errors, etc.) |
 | `et/resilience.go` | Exponential backoff helper |
 | `et/et_test.go` | Unit tests with sample hex data |
-| `examples/goodwe/main.go` | CLI with `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`
+| `cmd/goodwe/main.go` | CLI with flags: `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`, `-version` |
+| `.goreleaser.yaml` | GoReleaser build config (linux/darwin, amd64/arm64) |
+| `.github/workflows/ci.yml` | CI: test + lint + snapshot build on master push |
+| `.github/workflows/release.yml` | Release: goreleaser draft on `v*.*.*` tag |
