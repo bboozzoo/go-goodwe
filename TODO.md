@@ -160,7 +160,7 @@ Python detects inverter capabilities from serial number:
 
 ### TCP Port 502 Support
 - [x] Basic Modbus TCP transport via `tcpTransport` (MBAP framing, no CRC)
-- [ ] Auto-detect DTLS vs TCP in discovery (done) and handle fallback between transports
+- [x] Auto-detect DTLS vs TCP in discovery (done) — transport is determined from probe response format
 
 ---
 
