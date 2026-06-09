@@ -326,9 +326,24 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
        and close the database.
 4. **Create `pkg/api/handler.go`**
    - `New(store, inverter, debug bool) *Handler`
-   - Routes registered on `http.ServeMux`
-   - CORS middleware for dashboard access
-   - Request logging middleware:
+   - Routes registered on Go 1.22+ enhanced `http.ServeMux` — uses method-based patterns
+     and path parameters via `r.PathValue()`:
+     ```go
+     mux := http.NewServeMux()
+     mux.HandleFunc("GET /api/health", h.handleHealth)
+     mux.HandleFunc("GET /api/status", h.handleStatus)
+     mux.HandleFunc("GET /api/sensors", h.handleListSensors)
+     mux.HandleFunc("GET /api/data/{sensor}", h.handleGetData)
+     mux.HandleFunc("GET /api/data/{sensor}/aggregate", h.handleGetAggregate)
+     mux.HandleFunc("DELETE /api/data/{sensor}", h.handlePurgeData)
+     mux.HandleFunc("POST /api/data/{sensor}/purge", h.handlePurgeData)
+     mux.HandleFunc("GET /dashboard", h.handleDashboard)
+     sensor := r.PathValue("sensor")  // extract path parameter
+     ```
+   - `404` for unknown routes, `405 Method Not Allowed` for wrong method on known path
+     (automatic with Go 1.22+ method patterns)
+   - CORS middleware wraps the mux for dashboard access
+   - Request logging middleware wraps the CORS handler:
      - `DEBUG` level (only when `debug=true`): logs method, path, status, and latency
      - Normal operation: no per-request logging to avoid noise
    - Live `/api/status` endpoint calls `inverter.GetSensors()` on-the-fly, returns all sensors
