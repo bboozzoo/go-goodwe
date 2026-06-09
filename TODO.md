@@ -281,22 +281,38 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
 1. **Add SQLite dependency** (`modernc.org/sqlite` — pure Go, no CGO)
 2. **Create `pkg/db/store.go`** — DB interface, SQLite implementation
    - `Open(path string) (*Store, error)` — opens/creates DB, runs migrations
+   - `BeginTx(ctx) (*Tx, error)` — starts a transaction. `Tx` wraps `*sql.Tx` and exposes
+     all query/insert methods. Used by the poll loop to batch all sensor inserts atomically.
    - `InsertSample(ctx, name, value, unit, t time.Time) error` — stores numeric values in `value` column,
      label/string values in `value_text` column. Determines column based on Go type (float64→REAL, string→TEXT).
+     Available both on `*Store` (auto-commit) and `*Tx` (part of a batch).
    - `QuerySamples(ctx, name string, since, until time.Time, limit int) ([]Sample, error)`
      Sample struct: `{Value *float64, ValueText *string, Unit string, SampledAt time.Time}`
    - `QueryAggregated(ctx, name, bucket string, since, until time.Time) ([]Aggregate, error)`
      - Only for numeric sensors; returns 0 rows for label sensors
-   - `RunHourlyAggregation(ctx) error` — rolls numeric raw→hourly batch (skips string-value samples)
-   - `RunDailyAggregation(ctx) error` — rolls hourly→daily batch
+   - `RunHourlyAggregation(ctx) error` — rolls numeric raw→hourly batch (skips string-value samples).
+     Runs inside a transaction: read raw → compute → write aggregates → delete raw.
+   - `RunDailyAggregation(ctx) error` — rolls hourly→daily batch. Same transactional approach.
    - `PurgeRawSamples(ctx, before time.Time) error` — cleanup old raw data
    - `PurgeHourlySamples(ctx, before time.Time) error` — cleanup old hourly data
 3. **Create `pkg/daemon/daemon.go`**
    - `New(ctx, inverter, store, pollInterval) *Daemon`
    - `Run()` — starts poll loop + aggregation scheduler
    - On startup: detect latest `sampled_at`, backfill aggregation for any missed hours/days
-   - On each tick: `GetSensors()` → `InsertSample()` for ALL sensors (both numeric and label),
-     storing strings in `value_text` column when value is non-numeric
+   - On each tick:
+     1. Call `inverter.GetSensors(ctx)` — get all current values
+     2. Open `store.BeginTx(ctx)` — batch all inserts atomically
+     3. `tx.InsertSample(...)` for ALL sensors (numeric → `value` column, label → `value_text` column)
+     4. `tx.Commit()` — single fsync for the whole batch
+     5. On error from any step: `tx.Rollback()`, log WARN, then handle reconnection
+   - **Inverter reconnection on failure**:
+     - On `GetSensors` error (e.g., DTLS timeout, connection lost):
+       - Log `WARN` with the error
+       - Sleep 5s, then attempt `inverter.Connect(ctx)` with the existing backoff from `et/resilience.go`
+       - On success, log `INFO` and resume normal polling
+       - On failure after 3 retries, log `ERROR` and continue retrying with exponential backoff
+         (cap at 5 min between retries) — don't exit, keep trying indefinitely
+     - The `/api/status` endpoint can report the current connection state
    - On hour boundary: `RunHourlyAggregation()` + `PurgeRawSamples()`
    - On day boundary: `RunDailyAggregation()` + `PurgeHourlySamples()`
    - Aggregation is idempotent: uses `INSERT ... ON CONFLICT DO UPDATE`
@@ -364,6 +380,38 @@ The `pkg/db/store.go` `Open(dsn string)` function parses the URI, selects the ap
 driver, and returns the `Store` interface. This makes the architecture database-agnostic
 for future backends (e.g., InfluxDB, TimescaleDB) while keeping the first implementation
 simple with SQLite.
+
+#### Concurrency & Locking
+
+The daemon has two concurrent goroutines accessing the database:
+1. **Poll loop** (producer) — writes sensor samples periodically
+2. **HTTP server** (consumer) — reads samples/aggregates on demand
+
+SQLite's concurrency model (via `database/sql` connection pool):
+- Multiple concurrent **readers** are allowed (SHARED lock)
+- Only one **writer** at a time (RESERVED/EXCLUSIVE lock)
+- Writers block readers briefly, and vice versa
+
+For our workload this is perfectly fine — one short write burst every 30s, reads are sporadic.
+The `database/sql` pool handles concurrency transparently.
+
+**No Go-level mutex needed.** The `*sql.DB` pool manages connections; `modernc.org/sqlite`
+respects SQLite's locking protocol. All synchronization happens at the SQLite file level.
+
+**Transactional integrity:**
+- Poll loop: all N sensor inserts per tick are wrapped in `BeginTx()/Commit()`.
+  If Commit fails, Rollback ensures no partial data. Duration: <50ms for ~200 inserts.
+- Aggregation: each aggregation step (read raw → compute → write aggregates → delete old)
+  runs in a single transaction. If the daemon crashes mid-aggregation, the incomplete
+  transaction is rolled back on next open (SQLite auto-rollback on crash).
+- API reads: no transaction needed for simple point queries; they use auto-commit reads.
+  The `/api/data/{sensor}/aggregate` query may use a read-only transaction for consistency
+  if reading multiple rows, but this is optional.
+
+**WAL mode:** The SQLite database should be opened with `PRAGMA journal_mode=WAL`.
+WAL (Write-Ahead Logging) allows concurrent reads during a write — the reader sees the
+pre-write snapshot while the writer appends to the WAL. This is ideal for our producer/
+consumer pattern. Enabled in `Open()` as part of migrations.
 
 #### Database Format & Robustness
 
@@ -449,6 +497,13 @@ Python detects inverter capabilities from serial number:
 | `et/resilience.go` | Exponential backoff helper |
 | `et/et_test.go` | Unit tests with sample hex data |
 | `cmd/goodwe/main.go` | CLI with flags: `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`, `-version` |
+| `cmd/goodwe-daemon/main.go` | Daemon entrypoint — flag parsing, DB init, HTTP + poll loop orchestration |
+| `pkg/db/store.go` | Database interface + SQLite implementation, transactions, WAL mode |
+| `pkg/db/migrations.go` | Auto-run schema creation + migrations |
+| `pkg/db/aggregation.go` | Hourly/daily rollup queries |
+| `pkg/daemon/daemon.go` | Poll loop, inverter reconnection with backoff, aggregation scheduler |
+| `pkg/api/handler.go` | HTTP routes, CORS middleware, request logging (debug-gated) |
+| `pkg/dashboard/` (embedded) | Static HTML + JS dashboard files |
 | `.goreleaser.yaml` | GoReleaser build config (linux/darwin, amd64/arm64) |
 | `.github/workflows/ci.yml` | CI: test + lint + snapshot build on master push |
 | `.github/workflows/release.yml` | Release: goreleaser draft on `v*.*.*` tag |
