@@ -178,7 +178,7 @@ Python detects inverter capabilities from serial number:
 ## 📁 Code Map
 
 | File | Purpose |
-|---|---|---|
+|---|---|
 | `goodwe.go` | Root interface (`Inverter`, `SensorValue`, `Info`), `ErrUnsupported` |
 | `discovery/discover.go` | `Discover()` — probes inverter, detects transport, returns `Inverter` |
 | `et/et.go` | `ETInverter` — Connect, Close, GetInfo, GetSensors, ReadSensor |
