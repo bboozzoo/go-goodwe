@@ -62,9 +62,7 @@ func (h *Handler) buildRoutes() http.Handler {
 	// Wrap in middleware chain: innermost first.
 	var handler http.Handler = mux
 	handler = corsMiddleware(handler)
-	if h.debug {
-		handler = loggingMiddleware(handler)
-	}
+	handler = loggingMiddleware(h.debug, handler)
 	return handler
 }
 
@@ -81,13 +79,17 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Warn("Failed to encode health response", "error", err)
+	}
 }
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("<html><body><h1>GoodWe Dashboard</h1><p>Dashboard will be available here.</p></body></html>"))
+	if _, err := w.Write([]byte("<html><body><h1>GoodWe Dashboard</h1><p>Dashboard will be available here.</p></body></html>")); err != nil {
+		slog.Warn("Failed to write dashboard response", "error", err)
+	}
 }
 
 func (h *Handler) handleNotFound(w http.ResponseWriter, r *http.Request) {
@@ -109,18 +111,31 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// loggingMiddleware logs every request at DEBUG level.
-func loggingMiddleware(next http.Handler) http.Handler {
+// loggingMiddleware logs every request.
+// - All requests are logged at DEBUG level (controlled by the debug flag).
+// - Error responses (status >= 400) are always logged at WARN level regardless of debug flag.
+func loggingMiddleware(debug bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lrw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(lrw, r)
-		slog.Debug("HTTP request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", lrw.status,
-			"latency", time.Since(start).String(),
-		)
+
+		latency := time.Since(start)
+		if lrw.status >= 400 {
+			slog.Warn("HTTP request error",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", lrw.status,
+				"latency", latency.String(),
+			)
+		} else if debug {
+			slog.Debug("HTTP request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", lrw.status,
+				"latency", latency.String(),
+			)
+		}
 	})
 }
 
