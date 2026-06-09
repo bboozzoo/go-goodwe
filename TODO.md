@@ -151,8 +151,9 @@ exposes a REST API + embedded JS dashboard.
 -dashboard               — serve the JS dashboard (requires -daemon)
 -dbstore <dsn>           — database connection string (default: sqlite://~/.goodwe/goodwe.db)
 -poll <interval>          — sensor poll interval (default: 30s, min: 5s)
--ip <ip>                  — required for daemon mode too
+-inverterip <ip>          — IP address of the GoodWe inverter
 -purge <date>             — one-shot: purge all data older than this date and exit
+-debug                    — enable debug logging (includes HTTP request logging)
 ```
 
 #### Gap Handling on Restart
@@ -303,9 +304,12 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
    - Empty hour buckets are omitted (dashboard shows gaps via `spanGaps: false`)
    - Graceful shutdown on context cancellation
 4. **Create `pkg/api/handler.go`**
-   - `New(store, inverter) *Handler`
+   - `New(store, inverter, debug bool) *Handler`
    - Routes registered on `http.ServeMux`
    - CORS middleware for dashboard access
+   - Request logging middleware:
+     - `DEBUG` level (only when `debug=true`): logs method, path, status, and latency
+     - Normal operation: no per-request logging to avoid noise
    - Live `/api/status` endpoint calls `inverter.GetSensors()` on-the-fly, returns all sensors
      with their current values, units, and inferred type (numeric/label)
    - `DELETE /api/data/{sensor}?before=<date>` — purges raw samples older than given date
@@ -319,6 +323,13 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
    - Parse flags, open DB, discover inverter, create Daemon + API handler
    - Launch HTTP server + daemon poll loop concurrently
    - Handle OS signals for graceful shutdown
+   - Logging levels:
+     - `INFO`: daemon start/stop, poll cycle start/summary, inverter connection events,
+       aggregation runs, data purges
+     - `WARN`: inverter read failures (with retry), slow poll cycles, disk space warnings
+     - `ERROR`: inverter disconnection, database errors, unrecoverable faults
+     - `DEBUG` (requires `-debug` flag): individual sensor values on each poll tick,
+       HTTP request method+path+latency, SQL query details
 7. **Integration with existing code**
    - The daemon imports `goodwe.Inverter`, `discovery.Discover()`
    - Reuses the existing transport and sensor infrastructure
@@ -353,6 +364,35 @@ The `pkg/db/store.go` `Open(dsn string)` function parses the URI, selects the ap
 driver, and returns the `Store` interface. This makes the architecture database-agnostic
 for future backends (e.g., InfluxDB, TimescaleDB) while keeping the first implementation
 simple with SQLite.
+
+#### Database Format & Robustness
+
+A single SQLite database file is used throughout — no yearly rotation.
+
+**Why a single file is sufficient:**
+- The aggregation scheme keeps the database compact:
+  - Raw samples: purged after 7 days (bounded at ~20K rows per sensor, ~2M total for 100 sensors)
+  - Hourly aggregates: purged after 3 months (~2,160 rows per sensor per year)
+  - Daily aggregates: kept forever (~365 rows per sensor per year)
+- With 100 sensors and 10 years of daily aggregates: ~365K rows total. SQLite handles millions
+trivially.
+- The daemon is low-frequency (poll every 30s), so write volume is tiny.
+
+**What about corruption or backup?**
+- The `-purge` flag can be used for manual cleanup.
+- For backups, copy the single `.db` file — `sqlite3 goodwe.db ".backup backup.db"` works online.
+- If yearly archival is desired later, a separate `-archive` command can export daily aggregates
+  to a read-only archive file, but this is out of scope for v1.
+
+**Is `modernc.org/sqlite` robust enough?**
+Yes. `modernc.org/sqlite` is a pure-Go translation (via the `ccgo` compiler) of the official
+SQLite C source. It passes the full SQLite test suite. It's used in production by projects like
+`go-kratos` and various Kubernetes tools. The performance characteristics:
+- Read throughput: ~80-90% of CGO sqlite3 — irrelevant for our low-volume workload
+- Write throughput: more than adequate for 1 write every 30s
+- Memory: negligible
+The only real downside vs CGO is larger binary size (~5MB extra from the pure Go translation),
+which is fine for a daemon binary. The benefit (no CGO, trivial cross-compilation) is worth it.
 
 #### Dependencies
 - `modernc.org/sqlite` — pure Go SQLite driver (no CGO)
