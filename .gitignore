@@ -1,6 +1,8 @@
 # Go binaries
 /main
 /goodwe
+/goodwe-daemon
+/goodwe-arm
 *.exe
 *.test
 *.out
