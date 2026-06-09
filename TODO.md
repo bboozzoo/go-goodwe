@@ -318,7 +318,12 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
    - Aggregation is idempotent: uses `INSERT ... ON CONFLICT DO UPDATE`
    - Aggregation only processes numeric sensors (label/code sensors are stored but not aggregated)
    - Empty hour buckets are omitted (dashboard shows gaps via `spanGaps: false`)
-   - Graceful shutdown on context cancellation
+   - Graceful shutdown:
+     - Listens on `ctx.Done()` (triggered by signal handler in main.go)
+     - On cancellation: finish the current poll cycle (commit any in-flight transaction),
+       then exit the loop. Do not start a new poll cycle.
+     - The Daemon's `Run()` returns, and main.go proceeds to tear down the HTTP server
+       and close the database.
 4. **Create `pkg/api/handler.go`**
    - `New(store, inverter, debug bool) *Handler`
    - Routes registered on `http.ServeMux`
@@ -338,12 +343,23 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
 6. **Create `cmd/goodwe-daemon/main.go`**
    - Parse flags, open DB, discover inverter, create Daemon + API handler
    - Launch HTTP server + daemon poll loop concurrently
-   - Handle OS signals for graceful shutdown
+   - **Shutdown sequence** (on SIGINT/SIGTERM):
+     1. Trap SIGINT (Ctrl+C) and SIGTERM via `signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)`
+     2. Cancel the root context → signals daemon poll loop to stop
+     3. Call `http.Server.Shutdown(ctx)` with a 10s timeout — drains in-flight HTTP requests,
+        refuses new connections
+     4. Wait for daemon `Run()` to return (poll loop finishes current cycle, commits transaction)
+     5. Close inverter connection: `inverter.Close()`
+     6. Close database: `store.Close()`
+     7. Log `INFO` "daemon shut down cleanly" and exit(0)
+   - Total graceful shutdown timeout: 15s. If exceeded, log `ERROR` and force exit(1).
    - Logging levels:
      - `INFO`: daemon start/stop, poll cycle start/summary, inverter connection events,
        aggregation runs, data purges
      - `WARN`: inverter read failures (with retry), slow poll cycles, disk space warnings
      - `ERROR`: inverter disconnection, database errors, unrecoverable faults
+     - `INFO` on shutdown: "received signal, shutting down...", "HTTP server stopped",
+       "inverter connection closed", "database closed", "daemon shut down cleanly"
      - `DEBUG` (requires `-debug` flag): individual sensor values on each poll tick,
        HTTP request method+path+latency, SQL query details
 7. **Integration with existing code**
