@@ -37,9 +37,36 @@ import (
 	"github.com/bboozzoo/go-goodwe/et"
 )
 
+// InverterConnState describes the current state of the inverter connection.
+type InverterConnState int
+
+const (
+	InverterStateDisabled   InverterConnState = iota // no inverter configured
+	InverterStateConnecting                          // connecting to inverter in progress
+	InverterStateConnected                           // connected and identity verified
+	InverterStateFailed                              // connection or identity error
+)
+
+func (s InverterConnState) String() string {
+	switch s {
+	case InverterStateDisabled:
+		return "disabled"
+	case InverterStateConnecting:
+		return "connecting"
+	case InverterStateConnected:
+		return "connected"
+	case InverterStateFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
 // DaemonStatus is the interface the daemon exposes for the API handler
-// to read inverter identity state and verification errors.
+// to read inverter state and verification errors.
 type DaemonStatus interface {
+	InverterState() InverterConnState
+	ConnError() error // nil unless state is Failed
 	VerificationError() error
 }
 
@@ -51,10 +78,10 @@ type Handler struct {
 	mux      http.Handler
 }
 
-// New creates an API handler. inverter and daemon may be nil; in that case
-// endpoints that require an inverter return a 503 status.
-func New(inverter goodwe.Inverter, daemon DaemonStatus, debug bool) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemon, debug: debug}
+// New creates an API handler. inverter and daemonStatus may be nil; in that
+// case endpoints that require an inverter return a 503 status.
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, debug bool) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -95,22 +122,41 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := "ok"
 	var invState *inverterState
 
-	if h.daemon != nil {
-		if err := h.daemon.VerificationError(); err != nil {
+	ds := h.daemon
+	if ds != nil {
+		switch ds.InverterState() {
+		case InverterStateDisabled:
+			invState = &inverterState{Connected: false}
+		case InverterStateConnecting:
 			status = "degraded"
 			invState = &inverterState{
 				Connected: false,
-				Error:     err.Error(),
+				Error:     "connecting to inverter...",
 			}
-		} else if h.inverter != nil {
+		case InverterStateConnected:
+			if err := ds.VerificationError(); err != nil {
+				status = "degraded"
+				invState = &inverterState{
+					Connected: false,
+					Error:     err.Error(),
+				}
+			} else {
+				invState = &inverterState{Connected: true}
+			}
+		case InverterStateFailed:
+			status = "degraded"
+			errMsg := "inverter connection failed"
+			if err := ds.ConnError(); err != nil {
+				errMsg = err.Error()
+			}
 			invState = &inverterState{
-				Connected: true,
+				Connected: false,
+				Error:     errMsg,
 			}
 		}
 	} else if h.inverter != nil {
-		invState = &inverterState{
-			Connected: true,
-		}
+		// No daemon status available — assume connected.
+		invState = &inverterState{Connected: true}
 	}
 
 	resp := healthResponse{
@@ -165,10 +211,32 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check daemon state before attempting to query the inverter.
+	ds := h.daemon
+	if ds != nil {
+		switch ds.InverterState() {
+		case InverterStateDisabled:
+			writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
+			return
+		case InverterStateConnecting:
+			writeJSONError(w, http.StatusServiceUnavailable, "connecting to inverter...")
+			return
+		case InverterStateFailed:
+			errMsg := "inverter connection failed"
+			if err := ds.ConnError(); err != nil {
+				errMsg = err.Error()
+			}
+			writeJSONError(w, http.StatusServiceUnavailable, errMsg)
+			return
+		case InverterStateConnected:
+			// proceed with the query
+		}
+	}
+
 	// Check for identity verification errors.
 	var errStr string
-	if h.daemon != nil {
-		if err := h.daemon.VerificationError(); err != nil {
+	if ds != nil {
+		if err := ds.VerificationError(); err != nil {
 			errStr = err.Error()
 		}
 	}

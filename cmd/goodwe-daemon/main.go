@@ -71,7 +71,7 @@ const (
 )
 
 func main() {
-	daemonAddr := flag.String("listen", "", "Address and port for the HTTP API server (default: \"\", e.g. :8080)")
+	daemonAddr := flag.String("listen", ":8080", "Address and port for the HTTP API server (default: \":8080\")")
 	dashboard := flag.Bool("dashboard", false, "Enable the embedded JS dashboard at /dashboard")
 	dsn := flag.String("dbstore", "sqlite://~/.goodwe/goodwe.db", "Database connection string (e.g. sqlite:///var/lib/goodwe/history.db)")
 	pollInterval := flag.Duration("poll", 0, "Sensor poll interval, minimum 5s (default: \"0\" (disabled), e.g. 30s, 1m)")
@@ -94,20 +94,13 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
-	if *daemonAddr == "" {
-		fmt.Println("Error: -listen <address>:<port> is required")
-		flag.Usage()
-		os.Exit(1)
-	}
-
 	// Enforce minimum poll interval.
 	if *pollInterval > 0 && *pollInterval < minPollInterval {
 		fmt.Printf("Error: -poll interval must be at least %s (got %s)\n", minPollInterval, *pollInterval)
 		os.Exit(1)
 	}
 
-	_ = dashboard
-	_ = purgeDate
+	_ = purgeDate // reserved for future use
 
 	slog.Info("Starting GoodWe daemon",
 		"version", getVersion(),

@@ -93,10 +93,10 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-listen` | (required) | Address and port for the HTTP API server (default: `""`, e.g. `:8080`) |
+| `-listen` | `":8080"` | Address and port for the HTTP API server |
 | `-inverterip` | `""` | IP address of the GoodWe inverter |
 | `-dbstore` | `"sqlite://~/.goodwe/goodwe.db"` | Database connection string (e.g. `sqlite:///var/lib/goodwe/history.db`) |
-| `-poll` | `"0"` (disabled) | Sensor poll interval (default: `"0"` (disabled), e.g. `30s`, `1m`; minimum 5s) |
+| `-poll` | `"0"` (disabled) | Sensor poll interval (e.g. `30s`, `1m`; minimum 5s) |
 | `-dashboard` | `false` | Enable the embedded JS dashboard at `/dashboard` |
 | `-purge` | `""` | One-shot: purge all data older than this date and exit (e.g. `2026-01-01`) |
 | `-debug` | `false` | Enable debug logging |
