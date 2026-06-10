@@ -222,13 +222,22 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 	}
 
 	if stored == nil {
-		slog.Info("Storing inverter identity", "serial", info.SerialNumber, "model", info.Model)
-		if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model); err != nil {
+		slog.Info("Storing inverter identity",
+			"serial", info.SerialNumber,
+			"model", info.Model,
+			"rated_power", info.RatedPower)
+		if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model, info.RatedPower); err != nil {
 			return fmt.Errorf("store inverter identity: %w", err)
 		}
 		d.inverterIdentity = &db.InverterIdentity{
-			Serial: info.SerialNumber,
-			Model:  info.Model,
+			Serial:     info.SerialNumber,
+			Model:      info.Model,
+			RatedPower: info.RatedPower,
+		}
+
+		// Purge any bad samples left from previous runs.
+		if err := d.store.PurgeBadSamples(ctx, info.RatedPower); err != nil {
+			slog.Warn("Failed to purge bad samples", "error", err)
 		}
 		return nil
 	}
@@ -246,8 +255,13 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 	}
 
 	slog.Info("Inverter identity verified", "serial", info.SerialNumber)
-	if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model); err != nil {
-		slog.Warn("Failed to update inverter last_seen", "error", err)
+	if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model, info.RatedPower); err != nil {
+		slog.Warn("Failed to update inverter identity", "error", err)
+	}
+
+	// Purge bad samples on every startup.
+	if err := d.store.PurgeBadSamples(ctx, info.RatedPower); err != nil {
+		slog.Warn("Failed to purge bad samples", "error", err)
 	}
 	return nil
 }

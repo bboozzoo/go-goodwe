@@ -41,10 +41,11 @@ import (
 
 // InverterIdentity holds the stored identity of the inverter.
 type InverterIdentity struct {
-	Serial    string
-	Model     string
-	FirstSeen time.Time
-	LastSeen  time.Time
+	Serial     string
+	Model      string
+	RatedPower int
+	FirstSeen  time.Time
+	LastSeen   time.Time
 }
 
 // Sample is a single sensor reading stored in the database.
@@ -96,10 +97,10 @@ func (s *Store) Close() error {
 // GetInverterIdentity returns the stored inverter identity, or nil if not yet set.
 func (s *Store) GetInverterIdentity(ctx context.Context) (*InverterIdentity, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT serial, model, first_seen, last_seen FROM inverter_identity LIMIT 1`)
+		`SELECT serial, model, rated_power, first_seen, last_seen FROM inverter_identity LIMIT 1`)
 
 	var ident InverterIdentity
-	if err := row.Scan(&ident.Serial, &ident.Model, &ident.FirstSeen, &ident.LastSeen); err != nil {
+	if err := row.Scan(&ident.Serial, &ident.Model, &ident.RatedPower, &ident.FirstSeen, &ident.LastSeen); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -109,15 +110,16 @@ func (s *Store) GetInverterIdentity(ctx context.Context) (*InverterIdentity, err
 }
 
 // SetInverterIdentity inserts or updates the inverter identity.
-func (s *Store) SetInverterIdentity(ctx context.Context, serial, model string) error {
+func (s *Store) SetInverterIdentity(ctx context.Context, serial, model string, ratedPower int) error {
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO inverter_identity (serial, model, first_seen, last_seen)
-		 VALUES (?, ?, ?, ?)
+		`INSERT INTO inverter_identity (serial, model, rated_power, first_seen, last_seen)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(serial) DO UPDATE SET
 		   model = excluded.model,
+		   rated_power = excluded.rated_power,
 		   last_seen = excluded.last_seen`,
-		serial, model, now, now)
+		serial, model, ratedPower, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to set inverter identity: %w", err)
 	}
@@ -178,12 +180,37 @@ func (s *Store) LastSampleTime(ctx context.Context) (*time.Time, error) {
 	return nil, nil
 }
 
-// migrate creates tables if they don't exist.
+// PurgeBadSamples deletes sensor samples with physically impossible values.
+// ratedPower is the inverter's rated power in watts, used to cap power readings.
+func (s *Store) PurgeBadSamples(ctx context.Context, ratedPower int) error {
+	if ratedPower <= 0 {
+		ratedPower = 15000 // conservative default for unknown inverters
+	}
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM sensor_samples WHERE
+			(unit = 'W'  AND value > ?) OR
+			(unit = '%'  AND (value > 100 OR value < 0)) OR
+			(unit = 'V'  AND value > 600) OR
+			(unit = 'A'  AND value > 50) OR
+			(unit = 'C'  AND (value > 200 OR value < -50)) OR
+			(unit = 'Hz' AND (value > 60 OR value < 40)) OR
+			(unit = 'kWh' AND value < 0) OR
+			(unit = 'var' AND (ABS(value) > 50000)) OR
+			(unit = 'VA' AND (value > 50000 OR value < 0))
+	`, ratedPower*2) // allow 2x rated power as surge margin
+	if err != nil {
+		return fmt.Errorf("purge bad samples: %w", err)
+	}
+	return nil
+}
+
+// migrate creates tables if they don't exist and applies schema upgrades.
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS inverter_identity (
 			serial     TEXT PRIMARY KEY,
 			model      TEXT NOT NULL DEFAULT '',
+			rated_power INTEGER NOT NULL DEFAULT 0,
 			first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			last_seen  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
@@ -199,6 +226,8 @@ func migrate(db *sql.DB) error {
 	`); err != nil {
 		return err
 	}
+	// Add rated_power column for databases created before it was added.
+	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN rated_power INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
