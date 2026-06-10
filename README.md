@@ -78,13 +78,13 @@ $ go build ./cmd/goodwe-daemon/
 Connect to an inverter and start the API server:
 
 ```sh
-$ ./goodwe-daemon -daemon :8080 -inverterip 192.168.4.82
+$ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82
 ```
 
 With debug logging and a custom database path:
 
 ```sh
-$ ./goodwe-daemon -daemon :8080 -inverterip 192.168.4.82 \
+$ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
     -dbstore sqlite:///var/lib/goodwe/history.db \
     -poll 30s -debug
 ```
@@ -93,14 +93,14 @@ $ ./goodwe-daemon -daemon :8080 -inverterip 192.168.4.82 \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-daemon` | (required) | Address and port for the HTTP API server (e.g. `:8080`) |
+| `-listen` | (required) | Address and port for the HTTP API server (default: `""`, e.g. `:8080`) |
 | `-inverterip` | `""` | IP address of the GoodWe inverter |
-| `-dbstore` | `sqlite://~/.goodwe/goodwe.db` | Database connection string |
-| `-poll` | `0` | Sensor poll interval (minimum 5s) |
-| `-dashboard` | `false` | Enable the embedded JS dashboard |
-| `-purge` | `""` | One-shot: purge data older than this date and exit |
+| `-dbstore` | `"sqlite://~/.goodwe/goodwe.db"` | Database connection string (e.g. `sqlite:///var/lib/goodwe/history.db`) |
+| `-poll` | `"0"` (disabled) | Sensor poll interval (default: `"0"` (disabled), e.g. `30s`, `1m`; minimum 5s) |
+| `-dashboard` | `false` | Enable the embedded JS dashboard at `/dashboard` |
+| `-purge` | `""` | One-shot: purge all data older than this date and exit (e.g. `2026-01-01`) |
 | `-debug` | `false` | Enable debug logging |
-| `-version` | `false` | Display version information |
+| `-version` | `false` | Display version information and exit |
 
 ### API Endpoints
 

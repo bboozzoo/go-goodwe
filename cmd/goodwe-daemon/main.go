@@ -71,12 +71,12 @@ const (
 )
 
 func main() {
-	daemonAddr := flag.String("daemon", "", "Address and port for the HTTP API server (e.g. :8080)")
+	daemonAddr := flag.String("listen", "", "Address and port for the HTTP API server (default: \"\", e.g. :8080)")
 	dashboard := flag.Bool("dashboard", false, "Enable the embedded JS dashboard at /dashboard")
-	dsn := flag.String("dbstore", "", "Database connection string (e.g. sqlite://~/.goodwe/goodwe.db)")
-	pollInterval := flag.Duration("poll", 0, "Sensor poll interval (e.g. 30s, 1m; minimum 5s)")
+	dsn := flag.String("dbstore", "sqlite://~/.goodwe/goodwe.db", "Database connection string (e.g. sqlite:///var/lib/goodwe/history.db)")
+	pollInterval := flag.Duration("poll", 0, "Sensor poll interval, minimum 5s (default: \"0\" (disabled), e.g. 30s, 1m)")
 	inverterIP := flag.String("inverterip", "", "IP address of the GoodWe inverter")
-	purgeDate := flag.String("purge", "", "One-shot: purge all data older than this date and exit")
+	purgeDate := flag.String("purge", "", "One-shot: purge all data older than this date and exit (e.g. 2026-01-01)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	showVersion := flag.Bool("version", false, "Display version information and exit")
 	flag.Parse()
@@ -95,7 +95,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	if *daemonAddr == "" {
-		fmt.Println("Error: -daemon <address>:<port> is required")
+		fmt.Println("Error: -listen <address>:<port> is required")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -106,11 +106,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *dsn == "" {
-		*dsn = "sqlite://~/.goodwe/goodwe.db"
-	}
-
-	// In the skeleton phase we don't use dashboard or purge yet.
 	_ = dashboard
 	_ = purgeDate
 

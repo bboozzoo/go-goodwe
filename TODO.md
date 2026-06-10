@@ -147,12 +147,14 @@ exposes a REST API + embedded JS dashboard.
 
 #### CLI Flags
 ```
--daemon <address>:<port>  — run in daemon mode, serve API at this address
--dashboard               — serve the JS dashboard (requires -daemon)
--dbstore <dsn>           — database connection string (default: sqlite://~/.goodwe/goodwe.db)
--poll <interval>          — sensor poll interval (default: 30s, min: 5s)
+-listen <address>:<port>  — address and port for the HTTP API server (default: "", e.g. :8080)
+-dashboard               — enable the embedded JS dashboard at /dashboard
+-dbstore <dsn>           — database connection string (default: sqlite://~/.goodwe/goodwe.db,
+                           e.g. sqlite:///var/lib/goodwe/history.db)
+-poll <interval>          — sensor poll interval (default: "0" (disabled), min: 5s,
+                           e.g. 30s, 1m)
 -inverterip <ip>          — IP address of the GoodWe inverter
--purge <date>             — one-shot: purge all data older than this date and exit
+-purge <date>             — one-shot: purge all data older than this date and exit (e.g. 2026-01-01)
 -debug                    — enable debug logging (includes HTTP request logging)
 ```
 
@@ -385,10 +387,10 @@ No build step required — raw HTML + JS with Chart.js loaded from CDN or vendor
    - Add examples:
      ```
      # Default DB location (~/.goodwe/goodwe.db), poll every 15s
-     goodwe-daemon -ip 192.168.1.151 -daemon :8080 -dashboard -poll 15s
+     goodwe-daemon -inverterip 192.168.1.151 -listen :8080 -dashboard -poll 15s
 
      # Custom database path
-     goodwe-daemon -ip 192.168.1.151 -daemon :8080 -dbstore sqlite:///var/lib/goodwe/history.db
+     goodwe-daemon -inverterip 192.168.1.151 -listen :8080 -dbstore sqlite:///var/lib/goodwe/history.db
 
      # Purge data older than a specific date
      goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -purge 2026-01-01
