@@ -47,6 +47,14 @@ type InverterIdentity struct {
 	LastSeen  time.Time
 }
 
+// Sample is a single sensor reading stored in the database.
+type Sample struct {
+	Value     *float64  `json:"value,omitempty"`
+	ValueText *string   `json:"value_text,omitempty"`
+	Unit      string    `json:"unit"`
+	SampledAt time.Time `json:"sampled_at"`
+}
+
 // Store provides access to the SQLite database.
 type Store struct {
 	db *sql.DB
@@ -116,17 +124,82 @@ func (s *Store) SetInverterIdentity(ctx context.Context, serial, model string) e
 	return nil
 }
 
+// InsertSample stores a single sensor reading.
+func (s *Store) InsertSample(ctx context.Context, name, unit string, sampledAt time.Time, value *float64, valueText *string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO sensor_samples (sensor_name, value, value_text, unit, sampled_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		name, value, valueText, unit, sampledAt)
+	if err != nil {
+		return fmt.Errorf("insert sample: %w", err)
+	}
+	return nil
+}
+
+// QueryRawSamples returns raw sensor samples matching the given criteria.
+func (s *Store) QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]Sample, error) {
+	query := `SELECT value, value_text, unit, sampled_at FROM sensor_samples
+		 WHERE sensor_name = ? AND sampled_at >= ? AND sampled_at <= ?
+		 ORDER BY sampled_at ASC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query, name, since, until, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query samples: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var samples []Sample
+	for rows.Next() {
+		var s Sample
+		if err := rows.Scan(&s.Value, &s.ValueText, &s.Unit, &s.SampledAt); err != nil {
+			return nil, fmt.Errorf("scan sample: %w", err)
+		}
+		samples = append(samples, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
+	}
+	if samples == nil {
+		samples = []Sample{}
+	}
+	return samples, nil
+}
+
+// LastSampleTime returns the timestamp of the most recent sample in the database.
+// Returns nil if there are no samples.
+func (s *Store) LastSampleTime(ctx context.Context) (*time.Time, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT MAX(sampled_at) FROM sensor_samples`)
+	sampledAt := sql.NullTime{}
+	if err := row.Scan(&sampledAt); err != nil {
+		return nil, fmt.Errorf("query last sample time: %w", err)
+	}
+	if sampledAt.Valid {
+		return &sampledAt.Time, nil
+	}
+	return nil, nil
+}
+
 // migrate creates tables if they don't exist.
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS inverter_identity (
 			serial     TEXT PRIMARY KEY,
 			model      TEXT NOT NULL DEFAULT '',
 			first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			last_seen  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	return err
+		);
+		CREATE TABLE IF NOT EXISTS sensor_samples (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			sensor_name TEXT NOT NULL,
+			value      REAL,
+			value_text TEXT,
+			unit       TEXT NOT NULL DEFAULT '',
+			sampled_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_samples_name_time ON sensor_samples(sensor_name, sampled_at);
+	`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // parseDSN converts a DSN like "sqlite://~/.goodwe/goodwe.db" to a file path.

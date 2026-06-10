@@ -28,13 +28,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/bboozzoo/go-goodwe"
 	"github.com/bboozzoo/go-goodwe/et"
+	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
 
 // InverterConnState describes the current state of the inverter connection.
@@ -70,18 +73,25 @@ type DaemonStatus interface {
 	VerificationError() error
 }
 
+// SensorStore is the interface for reading sensor data from the database.
+type SensorStore interface {
+	QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
+	LastSampleTime(ctx context.Context) (*time.Time, error)
+}
+
 // Handler serves the REST API endpoints.
 type Handler struct {
 	inverter goodwe.Inverter // may be nil when no inverter is configured
 	daemon   DaemonStatus    // may be nil
+	store    SensorStore     // may be nil; aggregate endpoint returns 501
 	debug    bool
 	mux      http.Handler
 }
 
-// New creates an API handler. inverter and daemonStatus may be nil; in that
-// case endpoints that require an inverter return a 503 status.
-func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, debug bool) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemonStatus, debug: debug}
+// New creates an API handler. inverter, daemonStatus, and sensorStore may
+// be nil; endpoints return appropriate error codes when dependencies are missing.
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, debug bool) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -95,6 +105,8 @@ func (h *Handler) buildRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", h.handleHealth)
 	mux.HandleFunc("GET /api/sensors", h.handleListSensors)
+	mux.HandleFunc("GET /api/data/{sensor}", h.handleGetData)
+	mux.HandleFunc("GET /api/data/{sensor}/aggregate", h.handleGetAggregate)
 	mux.HandleFunc("GET /api/info", h.handleInfo)
 	mux.HandleFunc("GET /api/", h.handleNotFound)
 	mux.HandleFunc("GET /dashboard", h.handleDashboard)
@@ -192,6 +204,104 @@ func (h *Handler) handleListSensors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, sensors)
+}
+
+// liveDataResponse is the JSON body for a live sensor reading.
+type liveDataResponse struct {
+	Name      string `json:"name"`
+	Value     any    `json:"value"`
+	Unit      string `json:"unit"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (h *Handler) handleGetData(w http.ResponseWriter, r *http.Request) {
+	if h.inverter == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
+		return
+	}
+
+	sensorName := r.PathValue("sensor")
+	if sensorName == "" {
+		writeJSONError(w, http.StatusBadRequest, "sensor name is required")
+		return
+	}
+
+	sv, err := h.inverter.ReadSensor(r.Context(), sensorName)
+	if err != nil {
+		slog.Warn("Failed to read sensor", "sensor", sensorName, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp := liveDataResponse{
+		Name:      sv.Name,
+		Value:     sv.Value,
+		Unit:      sv.Unit,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
+	sensorName := r.PathValue("sensor")
+	if sensorName == "" {
+		writeJSONError(w, http.StatusBadRequest, "sensor name is required")
+		return
+	}
+
+	if h.store == nil {
+		writeJSONError(w, http.StatusNotImplemented, "database not configured; aggregate data unavailable")
+		return
+	}
+
+	// Parse optional query parameters.
+	sinceStr := r.URL.Query().Get("since")
+	untilStr := r.URL.Query().Get("until")
+	limitStr := r.URL.Query().Get("limit")
+
+	var since, until time.Time
+	var err error
+
+	if sinceStr != "" {
+		since, err = time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid since format (use RFC3339)")
+			return
+		}
+	}
+
+	if untilStr != "" {
+		until, err = time.Parse(time.RFC3339, untilStr)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid until format (use RFC3339)")
+			return
+		}
+	} else {
+		until = time.Now().UTC()
+	}
+
+	limit := 1000
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	samples, err := h.store.QueryRawSamples(r.Context(), sensorName, since, until, limit)
+	if err != nil {
+		slog.Warn("Failed to query samples", "sensor", sensorName, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to query samples")
+		return
+	}
+
+	if samples == nil {
+		samples = []db.Sample{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sensor":  sensorName,
+		"samples": samples,
+	})
 }
 
 // inverterInfo is the JSON body for GET /api/info.
