@@ -164,8 +164,9 @@ exposes a REST API + embedded JS dashboard.
 |-----------|--------|
 | SQLite dependency (`modernc.org/sqlite`) | Done |
 | `pkg/db/store.go` — `Open`, `Close`, `GetInverterIdentity`, `SetInverterIdentity` | Done |
-| `pkg/db/store.go` — `InsertSample`, `QueryRawSamples`, `LastSampleTime` | Done |
-| `pkg/db/store.go` — `sensor_samples` table + migration | Done |
+| `pkg/db/store.go` — `InsertSample`, `QueryRawSamples`, `LastSampleTime`, `LatestSample` | Done |
+| `pkg/db/store.go` — `PurgeBadSamples` (data sanitization) | Done |
+| `pkg/db/store.go` — `sensor_samples` + `inverter_identity` tables + migration | Done |
 | `pkg/db/store.go` — `BeginTx`/transactional batching | Pending |
 | `pkg/db/store.go` — `QueryAggregated` (hourly/daily) | Pending |
 | `pkg/db/store.go` — `RunHourlyAggregation`, `RunDailyAggregation` | Pending |
@@ -177,6 +178,9 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/daemon/daemon.go` — Gap backfill on startup | Pending |
 | `pkg/daemon/daemon.go` — Hourly/daily aggregation triggers | Pending |
 | `pkg/api/handler.go` — Routes: health, sensors, info, data, aggregate | Done |
+| `pkg/api/handler.go` — `?latest=true` support on aggregate endpoint | Done |
+| `pkg/api/handler.go` — `/api/info` served from database (no inverter hit) | Done |
+| `pkg/api/handler.go` — `last_poll_time` field in info response | Done |
 | `pkg/api/handler.go` — CORS + request logging middleware | Done |
 | `pkg/api/handler.go` — `DaemonStatus` interface | Done |
 | `pkg/api/handler.go` — `SensorStore` interface | Done |
@@ -184,7 +188,14 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/api/handler.go` — Purge endpoints (DELETE/POST) | Pending |
 | `cmd/goodwe-daemon/main.go` — Flag parsing, DB, discovery, HTTP + poll | Done |
 | `cmd/goodwe-daemon/main.go` — Graceful shutdown (15s timeout) | Done |
-| `pkg/dashboard/` — Embedded HTML+JS dashboard | Not started |
+| `pkg/dashboard/` — Embedded HTML+JS single-page app | Done |
+| `pkg/dashboard/` — Sensor list sidebar with search filter | Done |
+| `pkg/dashboard/` — Line charts with time range selector | Done |
+| `pkg/dashboard/` — Live mode toggle (auto-refresh) | Done |
+| `pkg/dashboard/` — Inverter status header (from DB) | Done |
+| `pkg/dashboard/` — System status cards (grid, PV, battery, errors) | Done |
+| README — CLI + daemon documentation | Done |
+| Data sanitization at startup (`PurgeBadSamples`) | Done |
 
 #### Gap Handling on Restart
 When the daemon starts after a period of downtime (e.g., machine was off),
@@ -270,9 +281,10 @@ Implemented:
 ```
 GET  /api/health                        → {"status":"ok"|"degraded", inverter: {connected, error}}
 GET  /api/sensors                       → [{name, category}, ...]
-GET  /api/info                          → {serial, model, firmware, rated_power, ...}
+GET  /api/info                          → {serial, model, firmware, rated_power, dsp_version,
+                                            arm_version, last_poll_time, error}
 GET  /api/data/{sensor}                 → live Modbus read: {name, value, unit, timestamp}
-GET  /api/data/{sensor}/aggregate       → raw samples from DB (?since=&until=&limit=)
+GET  /api/data/{sensor}/aggregate       → raw samples from DB (?since=&until=&limit=&latest=)
 ```
 
 Pending:
@@ -280,7 +292,6 @@ Pending:
 GET  /api/status                        → current live readings from inverter (all sensors)
 DELETE /api/data/{sensor}               → purge samples older than ?before=<date>
 POST  /api/data/{sensor}/purge          → alternative: JSON body
-GET  /dashboard                         → serves the embedded JS dashboard
 ```
 
 #### Dashboard (Single-page App, Chart.js)
@@ -322,7 +333,7 @@ Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed belo
    - `RunDailyAggregation(ctx) error` — ❌ pending
    - `PurgeRawSamples(ctx, before time.Time) error` — ❌ pending
    - `PurgeHourlySamples(ctx, before time.Time) error` — ❌ pending
-3. **Create `pkg/daemon/daemon.go`** — ✅ skeleton done, missing sub-items:
+3. **Create `pkg/daemon/daemon.go`** — ✅ done, missing sub-items:
    - Wrap poll inserts in `BeginTx()/Commit()` — ❌ currently single inserts
    - Inverter reconnection on poll failure — ❌ currently exits on error
    - Gap backfill on startup (`LastSampleTime`) — ❌ not wired
@@ -330,8 +341,7 @@ Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed belo
 4. **Create `pkg/api/handler.go`** — ✅ routes done, missing:
    - `/api/status` endpoint — ❌ pending
    - Purge endpoints — ❌ pending
-   - `/dashboard` — placeholder only, real embed pending
-5. **Create `pkg/dashboard/`** — ❌ not started
+5. **Create `pkg/dashboard/`** — ✅ done with full single-page app
 6. **Create `cmd/goodwe-daemon/main.go`** — ✅ done
 7. **Integration with existing code** — ✅ done
 8. **Documentation** — ✅ README updated
@@ -438,6 +448,43 @@ Python detects inverter capabilities from serial number:
 - [ ] `write_setting(ctx, name, value)` — Modbus write with encode
 - [ ] Support ARM FW 19 vs 22 variant settings
 
+### MQTT Integration
+
+Forward sensor values to an MQTT broker for integration with Home Assistant
+(or other smart-home systems). Home Assistant supports auto-discovery via
+MQTT, which would automatically create sensor entities for each inverter
+sensor.
+
+#### Design
+
+- New flag: `-mqtt-broker tcp://192.168.1.100:1883` (enable MQTT publishing)
+- Additional flags: `-mqtt-user`, `-mqtt-pass`, `-mqtt-topic-prefix` (default:
+  `goodwe/<serial>/sensor/<name>`)
+- On each poll tick, after storing samples in the DB, publish each sensor
+  value to its MQTT topic as a JSON payload:
+  ```json
+  {"value": 60, "unit": "%", "name": "Battery State of Charge",
+   "sampled_at": "2026-06-10T12:00:00Z"}
+  ```
+- Home Assistant MQTT Discovery: publish discovery config to
+  `homeassistant/sensor/goodwe_<serial>_<name>/config` with the correct
+  `state_topic`, `unit_of_measurement`, `device_class`, etc.
+- Reconnection: if the MQTT broker is unavailable, log and retry with
+  exponential backoff (do not block the poll loop).
+- Use `eclipse/paho.mqtt.golang` (the de-facto Go MQTT client library).
+
+#### Implementation Steps
+1. Add `eclipse/paho.mqtt.golang` dependency
+2. Create `pkg/mqtt/publisher.go` — connects to broker, publishes samples
+3. Create `pkg/mqtt/discovery.go` — Home Assistant MQTT discovery config
+4. Wire publisher into daemon's `pollOnce()`: after `InsertSample`, publish
+   to MQTT
+5. Add CLI flags to `cmd/goodwe-daemon/main.go`
+6. Update README with MQTT configuration examples
+
+#### Dependencies
+- `github.com/eclipse/paho.mqtt.golang` — MQTT 3.1.1 client
+
 ### TCP Port 502 Support
 - [x] Basic Modbus TCP transport via `tcpTransport` (MBAP framing, no CRC)
 - [x] Auto-detect DTLS vs TCP in discovery (done) — transport is determined from probe response format
@@ -485,11 +532,11 @@ Python detects inverter capabilities from serial number:
 | `et/et_test.go` | Unit tests with sample hex data |
 | `cmd/goodwe/main.go` | CLI with flags: `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`, `-version` |
 | `cmd/goodwe-daemon/main.go` | Daemon entrypoint — flag parsing, DB init, HTTP + poll loop orchestration |
-| `pkg/db/store.go` | Database interface + SQLite implementation, transactions, WAL mode |
-| `pkg/db/store.go` | SQLite store: schema, migrations, identity, samples, queries (all in one file) |
+| `pkg/db/store.go` | SQLite store: schema, migrations, identity, samples, queries |
 | `pkg/daemon/daemon.go` | Poll loop, identity verification, state tracking |
 | `pkg/api/handler.go` | HTTP routes, CORS + logging middleware, daemon + store interfaces |
-| `pkg/dashboard/` (not yet created) | Static HTML + JS dashboard files |
+| `pkg/dashboard/dashboard.go` | Embed wrapper serving the dashboard HTML |
+| `pkg/dashboard/index.html` | Single-page dashboard app (Chart.js, dark theme) |
 | `.goreleaser.yaml` | GoReleaser build config (linux/darwin, amd64/arm64) |
 | `.github/workflows/ci.yml` | CI: test + lint + snapshot build on master push |
 | `.github/workflows/release.yml` | Release: goreleaser draft on `v*.*.*` tag |
