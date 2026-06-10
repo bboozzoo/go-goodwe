@@ -37,6 +37,7 @@ import (
 
 	"github.com/bboozzoo/go-goodwe"
 	"github.com/bboozzoo/go-goodwe/et"
+	"github.com/bboozzoo/go-goodwe/pkg/dashboard"
 	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
 
@@ -388,11 +389,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte("<html><body><h1>GoodWe Dashboard</h1><p>Dashboard will be available here.</p></body></html>")); err != nil {
-		slog.Warn("Failed to write dashboard response", "error", err)
-	}
+	dashboard.Handler().ServeHTTP(w, r)
 }
 
 func (h *Handler) handleNotFound(w http.ResponseWriter, r *http.Request) {

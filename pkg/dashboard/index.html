@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoodWe Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+.header { background: #1e293b; padding: 1rem 1.5rem; border-bottom: 1px solid #334155; }
+.header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
+.header .status { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.875rem; color: #94a3b8; }
+.header .status .val { color: #e2e8f0; font-weight: 500; }
+.header .error { color: #f87171; margin-top: 0.5rem; padding: 0.5rem; background: #450a0a; border-radius: 4px; }
+.system-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 1rem; padding: 1rem 1.5rem; background: #1e293b; border-bottom: 1px solid #334155; }
+.system-grid .card { background: #0f172a; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid #334155; }
+.system-grid .card .label { font-size: 0.75rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+.system-grid .card .value { font-size: 1.25rem; font-weight: 600; margin-top: 0.25rem; }
+.system-grid .card .value.on-grid { color: #4ade80; }
+.system-grid .card .value.off-grid { color: #fbbf24; }
+.system-grid .card .value.fault { color: #f87171; }
+.layout { display: flex; gap: 0; height: calc(100vh - 200px); }
+.sensor-list { width: 280px; min-width: 280px; overflow-y: auto; background: #1e293b;
+               border-right: 1px solid #334155; padding: 0.5rem; }
+.sensor-list input { width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid #334155;
+                     border-radius: 4px; background: #0f172a; color: #e2e8f0; font-size: 0.8rem; }
+.sensor-list input::placeholder { color: #64748b; }
+.sensor-list .category { font-size: 0.7rem; text-transform: uppercase; color: #64748b;
+                          letter-spacing: 0.05em; padding: 0.5rem 0.5rem 0.25rem; margin-top: 0.5rem; }
+.sensor-list .category:first-child { margin-top: 0; }
+.sensor-list .sensor { padding: 0.3rem 0.5rem; cursor: pointer; border-radius: 4px; font-size: 0.8rem;
+                        color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sensor-list .sensor:hover { background: #334155; color: #e2e8f0; }
+.sensor-list .sensor.selected { background: #1e3a5f; color: #38bdf8; }
+.graph-area { flex: 1; overflow-y: auto; padding: 1rem; }
+.controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.controls button { padding: 0.4rem 0.75rem; border: 1px solid #334155; background: #1e293b;
+                    color: #94a3b8; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.controls button.active { background: #1e3a5f; color: #38bdf8; border-color: #38bdf8; }
+.controls button:hover { background: #334155; color: #e2e8f0; }
+.controls label { font-size: 0.8rem; color: #64748b; }
+.controls .live-toggle { margin-left: auto; }
+.controls .live-toggle .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                                     margin-right: 0.4rem; }
+.controls .live-toggle .indicator.on { background: #4ade80; }
+.controls .live-toggle .indicator.off { background: #64748b; }
+.graph-card { background: #1e293b; border: 1px solid #334155; border-radius: 6px;
+               padding: 1rem; margin-bottom: 1rem; }
+.graph-card .graph-header { display: flex; justify-content: space-between; align-items: center;
+                             margin-bottom: 0.5rem; }
+.graph-card .graph-header .sensor-name { font-size: 0.8rem; font-weight: 500; }
+.graph-card .graph-header .sensor-unit { font-size: 0.7rem; color: #64748b; margin-left: 0.5rem; }
+.graph-card .graph-header .close-btn { background: none; border: none; color: #64748b;
+                                        cursor: pointer; font-size: 1rem; padding: 0.2rem 0.4rem; }
+.graph-card .graph-header .close-btn:hover { color: #f87171; }
+.graph-card canvas { width: 100% !important; max-height: 250px; }
+.empty-state { display: flex; align-items: center; justify-content: center; height: 100%;
+                color: #64748b; font-size: 0.9rem; }
+@media (max-width: 768px) {
+  .layout { flex-direction: column; height: auto; }
+  .sensor-list { width: 100%; min-width: unset; max-height: 200px; border-right: none;
+                  border-bottom: 1px solid #334155; }
+  .header .status { gap: 1rem; }
+  .system-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>GoodWe Inverter Dashboard</h1>
+  <div class="status" id="inverter-status">
+    <span>Serial: <span class="val" id="info-serial">-</span></span>
+    <span>Model: <span class="val" id="info-model">-</span></span>
+    <span>Rated: <span class="val" id="info-rated">-</span></span>
+    <span>Connected: <span class="val" id="info-connected">-</span></span>
+  </div>
+  <div id="error-box" class="error" style="display:none"></div>
+</div>
+
+<div class="system-grid" id="system-grid">
+  <div class="card"><div class="label">Grid Mode</div><div class="value" id="sys-grid-mode">-</div></div>
+  <div class="card"><div class="label">House Consumption</div><div class="value" id="sys-house">-</div></div>
+  <div class="card"><div class="label">PV Power</div><div class="value" id="sys-pv">-</div></div>
+  <div class="card"><div class="label">Battery SoC</div><div class="value" id="sys-battery">-</div></div>
+  <div class="card"><div class="label">Errors</div><div class="value" id="sys-errors" style="font-size:0.85rem">-</div></div>
+</div>
+
+<div class="layout">
+  <div class="sensor-list" id="sensor-list">
+    <input type="text" id="sensor-filter" placeholder="Filter sensors...">
+    <div id="sensor-items"></div>
+  </div>
+  <div class="graph-area" id="graph-area">
+    <div class="controls">
+      <label>Time range:</label>
+      <button data-range="1h" class="active">1 hour</button>
+      <button data-range="6h">6 hours</button>
+      <button data-range="24h">24 hours</button>
+      <button data-range="7d">7 days</button>
+      <button data-range="30d">30 days</button>
+      <div class="live-toggle">
+        <button id="live-btn"><span class="indicator off" id="live-indicator"></span>Live: OFF</button>
+      </div>
+    </div>
+    <div id="graphs-container">
+      <div class="empty-state">Select a sensor from the left panel to view its data</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+const state = {
+  sensors: [],             // [{name, category}]
+  graphs: [],              // [{id, chart, unit, sensorNames}]
+  timeRange: '1h',
+  live: false,
+  liveInterval: null,
+  graphCounter: 0,
+};
+
+// ---- Helpers ----
+function timeRangeToParams(range) {
+  const now = new Date();
+  let since;
+  switch (range) {
+    case '1h': since = new Date(now.getTime() - 1*60*60*1000); break;
+    case '6h': since = new Date(now.getTime() - 6*60*60*1000); break;
+    case '24h': since = new Date(now.getTime() - 24*60*60*1000); break;
+    case '7d': since = new Date(now.getTime() - 7*24*60*60*1000); break;
+    case '30d': since = new Date(now.getTime() - 30*24*60*60*1000); break;
+    default: since = new Date(now.getTime() - 1*60*60*1000);
+  }
+  return { since: since.toISOString(), until: now.toISOString() };
+}
+
+function sensorUnit(name) {
+  // Derive unit from sensor name conventions
+  const lower = name.toLowerCase();
+  if (lower.includes('soc') || lower.includes('soh')) return '%';
+  if (lower.includes('temp')) return 'C';
+  if (lower.includes('volt') || lower.startsWith('v')) return 'V';
+  if (lower.includes('curr') || lower.startsWith('i')) return 'A';
+  if (lower.includes('power') || lower.startsWith('p') ||
+      lower.includes('consumption') || lower.includes('load')) return 'W';
+  if (lower.includes('freq') || lower.startsWith('f')) return 'Hz';
+  if (lower.includes('energy') || lower.startsWith('e_')) return 'kWh';
+  return '';
+}
+
+function colorForIndex(i) {
+  const colors = ['#38bdf8','#4ade80','#fbbf24','#f87171','#a78bfa','#34d399','#fb923c','#e879f9'];
+  return colors[i % colors.length];
+}
+
+// ---- API calls ----
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function loadInfo() {
+  try {
+    const info = await fetchJSON('/api/info');
+    document.getElementById('info-serial').textContent = info.serial || '-';
+    document.getElementById('info-model').textContent = info.model || '-';
+    document.getElementById('info-rated').textContent = info.rated_power ? info.rated_power + ' W' : '-';
+    if (info.error) {
+      document.getElementById('error-box').textContent = info.error;
+      document.getElementById('error-box').style.display = 'block';
+      document.getElementById('info-connected').textContent = 'ERROR';
+      document.getElementById('info-connected').style.color = '#f87171';
+    } else {
+      document.getElementById('error-box').style.display = 'none';
+      document.getElementById('info-connected').textContent = 'Yes';
+      document.getElementById('info-connected').style.color = '#4ade80';
+    }
+  } catch (e) {
+    document.getElementById('error-box').textContent = 'Failed to load inverter info: ' + e.message;
+    document.getElementById('error-box').style.display = 'block';
+  }
+}
+
+async function loadStatus() {
+  try {
+    // Fetch key sensors live for the system status section
+    const sensors = [
+      'work_mode_label','total_inverter_power','ppv','battery_soc','errors',
+      'house_consumption','vgrid','pgrid'
+    ];
+    const promises = sensors.map(s => fetchJSON(`/api/data/${encodeURIComponent(s)}`).catch(() => null));
+    const results = await Promise.all(promises);
+    const data = {};
+    sensors.forEach((s, i) => { if (results[i]) data[s] = results[i]; });
+
+    if (data.work_mode_label) {
+      const el = document.getElementById('sys-grid-mode');
+      const v = String(data.work_mode_label.value);
+      el.textContent = v;
+      el.className = 'value';
+      if (v.includes('On-Grid')) el.classList.add('on-grid');
+      else if (v.includes('Off-Grid')) el.classList.add('off-grid');
+      else if (v.includes('Fault')) el.classList.add('fault');
+    }
+    document.getElementById('sys-house').textContent =
+      data.house_consumption ? data.house_consumption.value + ' W' : '-';
+    document.getElementById('sys-pv').textContent =
+      data.ppv ? data.ppv.value + ' W' : '-';
+    document.getElementById('sys-battery').textContent =
+      data.battery_soc ? data.battery_soc.value + ' %' : '-';
+    document.getElementById('sys-errors').textContent =
+      data.errors && data.errors.value ? String(data.errors.value) : 'None';
+  } catch (e) {
+    // status display is best-effort
+  }
+}
+
+async function loadSensors() {
+  try {
+    state.sensors = await fetchJSON('/api/sensors');
+    renderSensorList();
+  } catch (e) {
+    document.getElementById('sensor-items').innerHTML =
+      '<div style="color:#f87171;padding:0.5rem">Failed to load sensors</div>';
+  }
+}
+
+async function fetchSensorData(sensorName, since, until, limit) {
+  const params = new URLSearchParams({ since, until, limit: String(limit || 5000) });
+  return fetchJSON(`/api/data/${encodeURIComponent(sensorName)}/aggregate?${params}`);
+}
+
+// ---- Sensor list ----
+function renderSensorList() {
+  const filter = (document.getElementById('sensor-filter').value || '').toLowerCase();
+  const container = document.getElementById('sensor-items');
+  container.innerHTML = '';
+
+  const selectedNames = new Set();
+  state.graphs.forEach(g => g.sensorNames.forEach(n => selectedNames.add(n)));
+
+  const groups = {};
+  state.sensors.forEach(s => {
+    if (filter && !s.name.toLowerCase().includes(filter)) return;
+    if (!groups[s.category]) groups[s.category] = [];
+    groups[s.category].push(s);
+  });
+
+  const catOrder = ['Main Telemetry', 'Battery', 'Meter', 'MPPT'];
+  catOrder.forEach(cat => {
+    const items = groups[cat];
+    if (!items || !items.length) return;
+    const div = document.createElement('div');
+    div.className = 'category';
+    div.textContent = cat;
+    container.appendChild(div);
+    items.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'sensor';
+      if (selectedNames.has(s.name)) el.classList.add('selected');
+      el.textContent = s.name;
+      el.dataset.name = s.name;
+      el.addEventListener('click', () => onSensorClick(s.name));
+      container.appendChild(el);
+    });
+  });
+}
+
+// ---- Graph management ----
+function onSensorClick(name) {
+  // Determine unit (best effort from sensor name)
+  const unit = sensorUnit(name);
+
+  // Find existing graph with same unit
+  let graph = state.graphs.find(g => g.unit === unit);
+
+  if (graph) {
+    // Add sensor to existing graph
+    if (!graph.sensorNames.includes(name)) {
+      graph.sensorNames.push(name);
+      updateSensorListSelection();
+      refreshGraph(graph);
+    }
+  } else {
+    // Create new graph
+    const id = ++state.graphCounter;
+    const canvasId = `chart-${id}`;
+    graph = { id, chart: null, unit, sensorNames: [name], canvasId };
+    state.graphs.push(graph);
+
+    const container = document.getElementById('graphs-container');
+    // Remove empty state
+    const emptyState = container.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+
+    const card = document.createElement('div');
+    card.className = 'graph-card';
+    card.id = `graph-${id}`;
+    card.innerHTML = `
+      <div class="graph-header">
+        <div><span class="sensor-name">${name}</span> <span class="sensor-unit">${unit || ''}</span></div>
+        <button class="close-btn" onclick="closeGraph(${id})" title="Close graph">&times;</button>
+      </div>
+      <canvas id="${canvasId}"></canvas>
+    `;
+    container.appendChild(card);
+    updateSensorListSelection();
+    refreshGraph(graph);
+  }
+}
+
+function closeGraph(id) {
+  const idx = state.graphs.findIndex(g => g.id === id);
+  if (idx === -1) return;
+  const graph = state.graphs[idx];
+  if (graph.chart) graph.chart.destroy();
+  state.graphs.splice(idx, 1);
+  const card = document.getElementById(`graph-${id}`);
+  if (card) card.remove();
+  updateSensorListSelection();
+
+  if (state.graphs.length === 0) {
+    document.getElementById('graphs-container').innerHTML =
+      '<div class="empty-state">Select a sensor from the left panel to view its data</div>';
+  }
+}
+
+async function refreshGraph(graph) {
+  const canvas = document.getElementById(graph.canvasId);
+  if (!canvas) return;
+
+  const params = timeRangeToParams(state.timeRange);
+  const datasets = [];
+  const labels = new Set();
+
+  for (const name of graph.sensorNames) {
+    try {
+      const data = await fetchSensorData(name, params.since, params.until);
+      const samples = data.samples || [];
+      const values = samples.map(s => ({ t: new Date(s.sampled_at), v: s.value }));
+      datasets.push({ label: name, data: values, borderColor: colorForIndex(datasets.length),
+                      fill: false, tension: 0.2, spanGaps: false, pointRadius: 0 });
+      values.forEach(v => labels.add(v.t.getTime()));
+    } catch (e) {
+      console.warn('Failed to fetch', name, e);
+    }
+  }
+
+  if (graph.chart) {
+    graph.chart.destroy();
+  }
+
+  const ctx = canvas.getContext('2d');
+  graph.chart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 0 },
+      scales: {
+        x: {
+          type: 'time',
+          time: { displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MMM d' } },
+          ticks: { color: '#64748b', maxTicksLimit: 10 },
+          grid: { color: '#1e293b' },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#64748b' },
+          grid: { color: '#1e293b' },
+          title: { display: !!graph.unit, text: graph.unit || '', color: '#94a3b8' },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 8 } },
+      },
+    },
+  });
+}
+
+function refreshAllGraphs() {
+  state.graphs.forEach(g => refreshGraph(g));
+}
+
+function updateSensorListSelection() {
+  const selectedNames = new Set();
+  state.graphs.forEach(g => g.sensorNames.forEach(n => selectedNames.add(n)));
+  document.querySelectorAll('.sensor-list .sensor').forEach(el => {
+    el.classList.toggle('selected', selectedNames.has(el.dataset.name));
+  });
+}
+
+// ---- Live mode ----
+function toggleLive() {
+  state.live = !state.live;
+  const btn = document.getElementById('live-btn');
+  const indicator = document.getElementById('live-indicator');
+  if (state.live) {
+    btn.innerHTML = '<span class="indicator on" id="live-indicator"></span>Live: ON';
+    state.liveInterval = setInterval(refreshAllGraphs, 5000);
+  } else {
+    btn.innerHTML = '<span class="indicator off" id="live-indicator"></span>Live: OFF';
+    if (state.liveInterval) {
+      clearInterval(state.liveInterval);
+      state.liveInterval = null;
+    }
+  }
+}
+
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', () => {
+  loadInfo();
+  loadStatus();
+  loadSensors();
+
+  // Time range buttons
+  document.querySelectorAll('.controls button[data-range]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.controls button[data-range]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.timeRange = btn.dataset.range;
+      refreshAllGraphs();
+    });
+  });
+
+  // Live toggle
+  document.getElementById('live-btn').addEventListener('click', toggleLive);
+
+  // Sensor filter
+  document.getElementById('sensor-filter').addEventListener('input', renderSensorList);
+
+  // Periodic status refresh (every 30s)
+  setInterval(() => { loadInfo(); loadStatus(); }, 30000);
+});
+</script>
+</body>
+</html>
