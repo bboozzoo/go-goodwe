@@ -111,6 +111,7 @@ func (h *Handler) buildRoutes() http.Handler {
 	mux.HandleFunc("GET /api/info", h.handleInfo)
 	mux.HandleFunc("GET /api/", h.handleNotFound)
 	mux.HandleFunc("GET /dashboard", h.handleDashboard)
+	mux.HandleFunc("GET /", h.handleRootRedirect)
 
 	// Wrap in middleware chain: innermost first.
 	var handler http.Handler = mux
@@ -390,6 +391,14 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	dashboard.Handler().ServeHTTP(w, r)
+}
+
+func (h *Handler) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
 func (h *Handler) handleNotFound(w http.ResponseWriter, r *http.Request) {
