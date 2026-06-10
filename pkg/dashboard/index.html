@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GoodWe Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.umd.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -341,7 +340,7 @@ async function refreshGraph(graph) {
     try {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
-      const values = samples.map(s => ({ x: new Date(s.sampled_at), y: s.value }));
+      const values = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
       datasets.push({ label: name, data: values, borderColor: colorForIndex(datasets.length),
                       fill: false, tension: 0.2, spanGaps: false, pointRadius: 0 });
     } catch (e) {
@@ -363,9 +362,19 @@ async function refreshGraph(graph) {
       animation: { duration: 0 },
       scales: {
         x: {
-          type: 'time',
-          time: { displayFormats: { hour: 'HH:mm', minute: 'HH:mm', day: 'MMM d' } },
-          ticks: { color: '#64748b', maxTicksLimit: 10 },
+          type: 'linear',
+          ticks: {
+            color: '#64748b',
+            maxTicksLimit: 10,
+            callback: function(val) {
+              const d = new Date(val);
+              const range = state.timeRange;
+              if (range === '1h' || range === '6h') {
+                return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+              }
+              return ('0' + d.getMonth()+1).slice(-2) + '/' + ('0' + d.getDate()).slice(-2);
+            },
+          },
           grid: { color: '#1e293b' },
         },
         y: {
@@ -377,6 +386,14 @@ async function refreshGraph(graph) {
       },
       plugins: {
         legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 8 } },
+        tooltip: {
+          callbacks: {
+            title: function(items) {
+              if (!items.length) return '';
+              return new Date(items[0].parsed.x).toLocaleString();
+            },
+          },
+        },
       },
     },
   });
