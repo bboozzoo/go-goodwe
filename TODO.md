@@ -504,6 +504,20 @@ Python detects inverter capabilities from serial number:
 
 ## 🛠 Robustness & Polish
 
+### Daemon
+- [ ] Document the REST API in Go doc comments on handler methods
+- [ ] Add unit tests for:
+  - `/api/health` response format and status codes
+  - `/api/info` with and without inverter configured
+  - `/api/sensors` response format and sensor count
+  - Serial mismatch detection and error propagation
+  - DSN parsing (`sqlite://path`, `~` expansion, error cases)
+  - `parseDSN` edge cases (empty path, missing scheme)
+  - Graceful shutdown sequence (signal → context cancellation → resource cleanup)
+  - Min poll interval enforcement
+
+### General
+
 - [ ] Add tests for `parseProbeResponse` with `@busy` and edge cases
 - [ ] Add tests for `ReadSensor` with meter fallback (45/58/125)
 - [ ] Add integration test harness (mock inverter or recorded sessions)
