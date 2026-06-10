@@ -37,17 +37,24 @@ import (
 	"github.com/bboozzoo/go-goodwe/et"
 )
 
+// DaemonStatus is the interface the daemon exposes for the API handler
+// to read inverter identity state and verification errors.
+type DaemonStatus interface {
+	VerificationError() error
+}
+
 // Handler serves the REST API endpoints.
 type Handler struct {
 	inverter goodwe.Inverter // may be nil when no inverter is configured
+	daemon   DaemonStatus    // may be nil
 	debug    bool
 	mux      http.Handler
 }
 
-// New creates an API handler. inverter may be nil; in that case endpoints
-// that require an inverter return a 503 status.
-func New(inverter goodwe.Inverter, debug bool) *Handler {
-	h := &Handler{inverter: inverter, debug: debug}
+// New creates an API handler. inverter and daemon may be nil; in that case
+// endpoints that require an inverter return a 503 status.
+func New(inverter goodwe.Inverter, daemon DaemonStatus, debug bool) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemon, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -74,20 +81,44 @@ func (h *Handler) buildRoutes() http.Handler {
 
 // healthResponse is the JSON body for the health endpoint.
 type healthResponse struct {
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
+	Status    string         `json:"status"`
+	Timestamp string         `json:"timestamp"`
+	Inverter  *inverterState `json:"inverter,omitempty"`
+}
+
+type inverterState struct {
+	Connected bool   `json:"connected"`
+	Error     string `json:"error,omitempty"`
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := "ok"
+	var invState *inverterState
+
+	if h.daemon != nil {
+		if err := h.daemon.VerificationError(); err != nil {
+			status = "degraded"
+			invState = &inverterState{
+				Connected: false,
+				Error:     err.Error(),
+			}
+		} else if h.inverter != nil {
+			invState = &inverterState{
+				Connected: true,
+			}
+		}
+	} else if h.inverter != nil {
+		invState = &inverterState{
+			Connected: true,
+		}
+	}
+
 	resp := healthResponse{
-		Status:    "ok",
+		Status:    status,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Inverter:  invState,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Warn("Failed to encode health response", "error", err)
-	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // sensorEntry is one sensor in the /api/sensors response.
@@ -114,11 +145,7 @@ func (h *Handler) handleListSensors(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(sensors); err != nil {
-		slog.Warn("Failed to encode sensors response", "error", err)
-	}
+	writeJSON(w, http.StatusOK, sensors)
 }
 
 // inverterInfo is the JSON body for GET /api/info.
@@ -129,6 +156,7 @@ type inverterInfo struct {
 	Rated    int    `json:"rated_power"`
 	DSP      string `json:"dsp_version"`
 	ARM      string `json:"arm_version"`
+	Error    string `json:"error,omitempty"`
 }
 
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -136,12 +164,22 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
 		return
 	}
+
+	// Check for identity verification errors.
+	var errStr string
+	if h.daemon != nil {
+		if err := h.daemon.VerificationError(); err != nil {
+			errStr = err.Error()
+		}
+	}
+
 	info, err := h.inverter.GetInfo(r.Context())
 	if err != nil {
 		slog.Warn("Failed to get inverter info", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to get inverter info")
 		return
 	}
+
 	resp := inverterInfo{
 		Serial:   info.SerialNumber,
 		Model:    info.Model,
@@ -149,6 +187,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Rated:    info.RatedPower,
 		DSP:      info.DSPVersion,
 		ARM:      info.ARMVersion,
+		Error:    errStr,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

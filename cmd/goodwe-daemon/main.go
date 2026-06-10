@@ -44,6 +44,7 @@ import (
 	"github.com/bboozzoo/go-goodwe/discovery"
 	"github.com/bboozzoo/go-goodwe/pkg/api"
 	"github.com/bboozzoo/go-goodwe/pkg/daemon"
+	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
 
 var version = "dev"
@@ -109,24 +110,36 @@ func main() {
 		*dsn = "sqlite://~/.goodwe/goodwe.db"
 	}
 
-	// In the skeleton phase we don't use dbstore, dashboard, or purge yet.
-	_ = dsn
+	// In the skeleton phase we don't use dashboard or purge yet.
 	_ = dashboard
 	_ = purgeDate
 
 	slog.Info("Starting GoodWe daemon",
 		"version", getVersion(),
 		"listen", *daemonAddr,
+		"db", *dsn,
 		"dashboard", *dashboard,
 		"poll", *pollInterval,
 		"debug", *debug,
 	)
 
+	// Open database.
+	store, err := db.Open(*dsn)
+	if err != nil {
+		slog.Error("Failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			slog.Warn("Error closing database on shutdown", "error", err)
+		}
+	}()
+	slog.Info("Database opened")
+
 	// Discover and connect to the inverter.
 	var inverter goodwe.Inverter
 	if *inverterIP != "" {
 		slog.Info("Discovering inverter", "ip", *inverterIP)
-		var err error
 		inverter, err = discovery.Discover(context.Background(), *inverterIP)
 		if err != nil {
 			slog.Error("Failed to discover inverter", "error", err)
@@ -137,11 +150,11 @@ func main() {
 		slog.Warn("No -inverterip specified; sensor endpoints will return 503")
 	}
 
-	// Create the API handler with the inverter (may be nil).
-	handler := api.New(inverter, *debug)
+	// Create the daemon (may have nil inverter — handled gracefully).
+	dmn := daemon.New(inverter, store)
 
-	// Create the daemon with the inverter (may be nil).
-	dmn := daemon.New(inverter)
+	// Create the API handler with the inverter and daemon status provider.
+	handler := api.New(inverter, dmn, *debug)
 
 	// Start HTTP server.
 	httpServer := &http.Server{
@@ -199,6 +212,14 @@ func main() {
 		slog.Error("Daemon close error", "error", err)
 	} else {
 		slog.Info("Daemon closed")
+	}
+
+	// 3. Close database.
+	slog.Info("Closing database...")
+	if err := store.Close(); err != nil {
+		slog.Error("Database close error", "error", err)
+	} else {
+		slog.Info("Database closed")
 	}
 
 	slog.Info("GoodWe daemon shut down cleanly")
