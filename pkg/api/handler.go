@@ -258,8 +258,14 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	sinceStr := r.URL.Query().Get("since")
 	untilStr := r.URL.Query().Get("until")
 	limitStr := r.URL.Query().Get("limit")
+	bucket := r.URL.Query().Get("bucket") // reserved for future use: "raw", "hour", "day"
 
+	now := time.Now().UTC()
+
+	// Default to last 24 hours to prevent accidental full-table scans.
 	var since, until time.Time
+	since = now.Add(-24 * time.Hour)
+	until = now
 	var err error
 
 	if sinceStr != "" {
@@ -276,8 +282,16 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "invalid until format (use RFC3339)")
 			return
 		}
-	} else {
-		until = time.Now().UTC()
+	}
+
+	// Clamp until to now to avoid querying future data.
+	if until.After(now) {
+		until = now
+	}
+
+	if since.After(until) {
+		writeJSONError(w, http.StatusBadRequest, "since must be before until")
+		return
 	}
 
 	limit := 1000
@@ -286,6 +300,9 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+
+	// TODO: support bucket="hour" and bucket="day" using aggregate tables.
+	_ = bucket
 
 	samples, err := h.store.QueryRawSamples(r.Context(), sensorName, since, until, limit)
 	if err != nil {
