@@ -185,21 +185,31 @@ async function loadInfo() {
   }
 }
 
+async function fetchLatest(sensor) {
+  try {
+    const data = await fetchJSON(`/api/data/${encodeURIComponent(sensor)}/aggregate?latest=true`);
+    const samples = data.samples || [];
+    if (samples.length === 0) return null;
+    return samples[0];
+  } catch (e) {
+    return null;
+  }
+}
+
 async function loadStatus() {
   try {
-    // Fetch key sensors live for the system status section
-    const sensors = [
-      'work_mode_label','total_inverter_power','ppv','battery_soc','errors',
-      'house_consumption','vgrid','pgrid'
-    ];
-    const promises = sensors.map(s => fetchJSON(`/api/data/${encodeURIComponent(s)}`).catch(() => null));
-    const results = await Promise.all(promises);
-    const data = {};
-    sensors.forEach((s, i) => { if (results[i]) data[s] = results[i]; });
+    // Fetch latest samples from DB for the system status section.
+    const [grid, house, pv, battery, errors] = await Promise.all([
+      fetchLatest('work_mode_label'),
+      fetchLatest('house_consumption'),
+      fetchLatest('ppv'),
+      fetchLatest('battery_soc'),
+      fetchLatest('errors'),
+    ]);
 
-    if (data.work_mode_label) {
+    if (grid) {
       const el = document.getElementById('sys-grid-mode');
-      const v = String(data.work_mode_label.value);
+      const v = grid.value_text || String(grid.value || '');
       el.textContent = v;
       el.className = 'value';
       if (v.includes('On-Grid')) el.classList.add('on-grid');
@@ -207,13 +217,13 @@ async function loadStatus() {
       else if (v.includes('Fault')) el.classList.add('fault');
     }
     document.getElementById('sys-house').textContent =
-      data.house_consumption ? data.house_consumption.value + ' W' : '-';
+      house ? (house.value != null ? house.value + ' W' : house.value_text || '-') : '-';
     document.getElementById('sys-pv').textContent =
-      data.ppv ? data.ppv.value + ' W' : '-';
+      pv ? (pv.value != null ? pv.value + ' W' : pv.value_text || '-') : '-';
     document.getElementById('sys-battery').textContent =
-      data.battery_soc ? data.battery_soc.value + ' %' : '-';
+      battery ? (battery.value != null ? battery.value + ' %' : battery.value_text || '-') : '-';
     document.getElementById('sys-errors').textContent =
-      data.errors && data.errors.value ? String(data.errors.value) : 'None';
+      errors && errors.value_text ? errors.value_text : 'None';
   } catch (e) {
     // status display is best-effort
   }

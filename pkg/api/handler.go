@@ -77,6 +77,7 @@ type DaemonStatus interface {
 // SensorStore is the interface for reading sensor data from the database.
 type SensorStore interface {
 	QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
+	LatestSample(ctx context.Context, name string) (*db.Sample, error)
 	LastSampleTime(ctx context.Context) (*time.Time, error)
 }
 
@@ -253,6 +254,28 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 
 	if h.store == nil {
 		writeJSONError(w, http.StatusNotImplemented, "database not configured; aggregate data unavailable")
+		return
+	}
+
+	// Check for latest=true — return only the most recent sample.
+	if r.URL.Query().Get("latest") == "true" {
+		sample, err := h.store.LatestSample(r.Context(), sensorName)
+		if err != nil {
+			slog.Warn("Failed to query latest sample", "sensor", sensorName, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "failed to query latest sample")
+			return
+		}
+		if sample == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"sensor":  sensorName,
+				"samples": []db.Sample{},
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"sensor":  sensorName,
+			"samples": []db.Sample{*sample},
+		})
 		return
 	}
 
