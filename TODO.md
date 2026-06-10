@@ -147,7 +147,7 @@ exposes a REST API + embedded JS dashboard.
 
 #### CLI Flags
 ```
--listen <address>:<port>  — address and port for the HTTP API server (default: "", e.g. :8080)
+-listen <address>:<port>  — address and port for the HTTP API server (default: ":8080")
 -dashboard               — enable the embedded JS dashboard at /dashboard
 -dbstore <dsn>           — database connection string (default: sqlite://~/.goodwe/goodwe.db,
                            e.g. sqlite:///var/lib/goodwe/history.db)
@@ -157,6 +157,34 @@ exposes a REST API + embedded JS dashboard.
 -purge <date>             — one-shot: purge all data older than this date and exit (e.g. 2026-01-01)
 -debug                    — enable debug logging (includes HTTP request logging)
 ```
+
+#### Implementation Status
+
+| Component | Status |
+|-----------|--------|
+| SQLite dependency (`modernc.org/sqlite`) | Done |
+| `pkg/db/store.go` — `Open`, `Close`, `GetInverterIdentity`, `SetInverterIdentity` | Done |
+| `pkg/db/store.go` — `InsertSample`, `QueryRawSamples`, `LastSampleTime` | Done |
+| `pkg/db/store.go` — `sensor_samples` table + migration | Done |
+| `pkg/db/store.go` — `BeginTx`/transactional batching | Pending |
+| `pkg/db/store.go` — `QueryAggregated` (hourly/daily) | Pending |
+| `pkg/db/store.go` — `RunHourlyAggregation`, `RunDailyAggregation` | Pending |
+| `pkg/db/store.go` — `PurgeRawSamples`, `PurgeHourlySamples` | Pending |
+| `pkg/daemon/daemon.go` — Poll loop with `GetSensors` + `InsertSample` | Done |
+| `pkg/daemon/daemon.go` — Identity verification (`verifyIdentity`) | Done |
+| `pkg/daemon/daemon.go` — `InverterConnState` tracking | Done |
+| `pkg/daemon/daemon.go` — Inverter reconnection on failure | Pending |
+| `pkg/daemon/daemon.go` — Gap backfill on startup | Pending |
+| `pkg/daemon/daemon.go` — Hourly/daily aggregation triggers | Pending |
+| `pkg/api/handler.go` — Routes: health, sensors, info, data, aggregate | Done |
+| `pkg/api/handler.go` — CORS + request logging middleware | Done |
+| `pkg/api/handler.go` — `DaemonStatus` interface | Done |
+| `pkg/api/handler.go` — `SensorStore` interface | Done |
+| `pkg/api/handler.go` — `/api/status` (live all-sensors) | Pending |
+| `pkg/api/handler.go` — Purge endpoints (DELETE/POST) | Pending |
+| `cmd/goodwe-daemon/main.go` — Flag parsing, DB, discovery, HTTP + poll | Done |
+| `cmd/goodwe-daemon/main.go` — Graceful shutdown (15s timeout) | Done |
+| `pkg/dashboard/` — Embedded HTML+JS dashboard | Not started |
 
 #### Gap Handling on Restart
 When the daemon starts after a period of downtime (e.g., machine was off),
@@ -181,19 +209,17 @@ and let the dashboard handle gaps naturally (Chart.js `spanGaps: false`).
 #### Directory Layout
 ```
 cmd/goodwe/               — existing CLI (unchanged)
-cmd/goodwe-daemon/        — new daemon binary
+cmd/goodwe-daemon/        — daemon binary
   main.go                 — flag parsing + daemon orchestration
 pkg/daemon/
-  daemon.go               — poll loop + periodic aggregation
+  daemon.go               — poll loop, identity verification, state tracking
 pkg/db/
-  store.go                — DB interface + SQLite implementation
-  migrations.go           — auto-run schema migrations
-  aggregation.go          — hourly/daily aggregation logic
+  store.go                — DB interface + SQLite implementation (includes
+                           schema, queries, migrations — no separate files)
 pkg/api/
-  handler.go              — HTTP handler + routes
-  middleware.go           — logging, CORS
+  handler.go              — HTTP handler, routes, CORS + logging middleware
 pkg/dashboard/
-  (embedded via embed.FS) — static HTML/CSS/JS files
+  (not yet created)       — static HTML/CSS/JS files (embedded via embed.FS)
 ```
 
 #### Database Schema (SQLite)
@@ -239,19 +265,21 @@ CREATE TABLE sensor_daily (
 | Daily       | Forever   | Runs at midnight (UTC) |
 
 #### REST API Endpoints
+
+Implemented:
 ```
-GET  /api/health                        → {"status":"ok"}
+GET  /api/health                        → {"status":"ok"|"degraded", inverter: {connected, error}}
+GET  /api/sensors                       → [{name, category}, ...]
+GET  /api/info                          → {serial, model, firmware, rated_power, ...}
+GET  /api/data/{sensor}                 → live Modbus read: {name, value, unit, timestamp}
+GET  /api/data/{sensor}/aggregate       → raw samples from DB (?since=&until=&limit=)
+```
+
+Pending:
+```
 GET  /api/status                        → current live readings from inverter (all sensors)
-GET  /api/sensors                       → list of sensor names + metadata
-                                           (includes type: "numeric"|"label"|"code"|"bitmap",
-                                            unit, name, has_label_pair, label_for)
-GET  /api/data/{sensor}                 → raw samples (?since=&until=&limit=)
-                                           Label/string sensors return samples with value as string
-GET  /api/data/{sensor}/aggregate       → aggregated (?bucket=hour|day&since=&until=)
-                                           Only available for numeric sensors — returns 400 for labels
 DELETE /api/data/{sensor}               → purge samples older than ?before=<date>
-                                          (omit {sensor} to purge all sensors)
-POST  /api/data/{sensor}/purge          → alternative: JSON body {"before":"2026-01-01"}
+POST  /api/data/{sensor}/purge          → alternative: JSON body
 GET  /dashboard                         → serves the embedded JS dashboard
 ```
 
@@ -280,121 +308,33 @@ The dashboard is bundled via `//go:embed` and served as static files.
 No build step required — raw HTML + JS with Chart.js loaded from CDN or vendored.
 
 #### Implementation Steps
-1. **Add SQLite dependency** (`modernc.org/sqlite` — pure Go, no CGO)
-2. **Create `pkg/db/store.go`** — DB interface, SQLite implementation
-   - `Open(path string) (*Store, error)` — opens/creates DB, runs migrations
-   - `BeginTx(ctx) (*Tx, error)` — starts a transaction. `Tx` wraps `*sql.Tx` and exposes
-     all query/insert methods. Used by the poll loop to batch all sensor inserts atomically.
-   - `InsertSample(ctx, name, value, unit, t time.Time) error` — stores numeric values in `value` column,
-     label/string values in `value_text` column. Determines column based on Go type (float64→REAL, string→TEXT).
-     Available both on `*Store` (auto-commit) and `*Tx` (part of a batch).
-   - `QuerySamples(ctx, name string, since, until time.Time, limit int) ([]Sample, error)`
-     Sample struct: `{Value *float64, ValueText *string, Unit string, SampledAt time.Time}`
-   - `QueryAggregated(ctx, name, bucket string, since, until time.Time) ([]Aggregate, error)`
-     - Only for numeric sensors; returns 0 rows for label sensors
-   - `RunHourlyAggregation(ctx) error` — rolls numeric raw→hourly batch (skips string-value samples).
-     Runs inside a transaction: read raw → compute → write aggregates → delete raw.
-   - `RunDailyAggregation(ctx) error` — rolls hourly→daily batch. Same transactional approach.
-   - `PurgeRawSamples(ctx, before time.Time) error` — cleanup old raw data
-   - `PurgeHourlySamples(ctx, before time.Time) error` — cleanup old hourly data
-3. **Create `pkg/daemon/daemon.go`**
-   - `New(ctx, inverter, store, pollInterval) *Daemon`
-   - `Run()` — starts poll loop + aggregation scheduler
-   - On startup: detect latest `sampled_at`, backfill aggregation for any missed hours/days
-   - On each tick:
-     1. Call `inverter.GetSensors(ctx)` — get all current values
-     2. Open `store.BeginTx(ctx)` — batch all inserts atomically
-     3. `tx.InsertSample(...)` for ALL sensors (numeric → `value` column, label → `value_text` column)
-     4. `tx.Commit()` — single fsync for the whole batch
-     5. On error from any step: `tx.Rollback()`, log WARN, then handle reconnection
-   - **Inverter reconnection on failure**:
-     - On `GetSensors` error (e.g., DTLS timeout, connection lost):
-       - Log `WARN` with the error
-       - Sleep 5s, then attempt `inverter.Connect(ctx)` with the existing backoff from `et/resilience.go`
-       - On success, log `INFO` and resume normal polling
-       - On failure after 3 retries, log `ERROR` and continue retrying with exponential backoff
-         (cap at 5 min between retries) — don't exit, keep trying indefinitely
-     - The `/api/status` endpoint can report the current connection state
-   - On hour boundary: `RunHourlyAggregation()` + `PurgeRawSamples()`
-   - On day boundary: `RunDailyAggregation()` + `PurgeHourlySamples()`
-   - Aggregation is idempotent: uses `INSERT ... ON CONFLICT DO UPDATE`
-   - Aggregation only processes numeric sensors (label/code sensors are stored but not aggregated)
-   - Empty hour buckets are omitted (dashboard shows gaps via `spanGaps: false`)
-   - Graceful shutdown:
-     - Listens on `ctx.Done()` (triggered by signal handler in main.go)
-     - On cancellation: finish the current poll cycle (commit any in-flight transaction),
-       then exit the loop. Do not start a new poll cycle.
-     - The Daemon's `Run()` returns, and main.go proceeds to tear down the HTTP server
-       and close the database.
-4. **Create `pkg/api/handler.go`**
-   - `New(store, inverter, debug bool) *Handler`
-   - Routes registered on Go 1.22+ enhanced `http.ServeMux` — uses method-based patterns
-     and path parameters via `r.PathValue()`:
-     ```go
-     mux := http.NewServeMux()
-     mux.HandleFunc("GET /api/health", h.handleHealth)
-     mux.HandleFunc("GET /api/status", h.handleStatus)
-     mux.HandleFunc("GET /api/sensors", h.handleListSensors)
-     mux.HandleFunc("GET /api/data/{sensor}", h.handleGetData)
-     mux.HandleFunc("GET /api/data/{sensor}/aggregate", h.handleGetAggregate)
-     mux.HandleFunc("DELETE /api/data/{sensor}", h.handlePurgeData)
-     mux.HandleFunc("POST /api/data/{sensor}/purge", h.handlePurgeData)
-     mux.HandleFunc("GET /dashboard", h.handleDashboard)
-     sensor := r.PathValue("sensor")  // extract path parameter
-     ```
-   - `404` for unknown routes, `405 Method Not Allowed` for wrong method on known path
-     (automatic with Go 1.22+ method patterns)
-   - CORS middleware wraps the mux for dashboard access
-   - Request logging middleware wraps the CORS handler:
-     - `DEBUG` level (only when `debug=true`): logs method, path, status, and latency
-     - Normal operation: no per-request logging to avoid noise
-   - Live `/api/status` endpoint calls `inverter.GetSensors()` on-the-fly, returns all sensors
-     with their current values, units, and inferred type (numeric/label)
-   - `DELETE /api/data/{sensor}?before=<date>` — purges raw samples older than given date
-   - `POST /api/data/{sensor}/purge` — same, but with JSON body
-   - Both endpoints accept `all` as sensor name to purge everything
-5. **Create `pkg/dashboard/`** with embedded static files
-   - `index.html` — layout + controls
-   - `app.js` — Chart.js based dashboard logic
-   - Embedded via `//go:embed all:static`
-6. **Create `cmd/goodwe-daemon/main.go`**
-   - Parse flags, open DB, discover inverter, create Daemon + API handler
-   - Launch HTTP server + daemon poll loop concurrently
-   - **Shutdown sequence** (on SIGINT/SIGTERM):
-     1. Trap SIGINT (Ctrl+C) and SIGTERM via `signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)`
-     2. Cancel the root context → signals daemon poll loop to stop
-     3. Call `http.Server.Shutdown(ctx)` with a 10s timeout — drains in-flight HTTP requests,
-        refuses new connections
-     4. Wait for daemon `Run()` to return (poll loop finishes current cycle, commits transaction)
-     5. Close inverter connection: `inverter.Close()`
-     6. Close database: `store.Close()`
-     7. Log `INFO` "daemon shut down cleanly" and exit(0)
-   - Total graceful shutdown timeout: 15s. If exceeded, log `ERROR` and force exit(1).
-   - Logging levels:
-     - `INFO`: daemon start/stop, poll cycle start/summary, inverter connection events,
-       aggregation runs, data purges
-     - `WARN`: inverter read failures (with retry), slow poll cycles, disk space warnings
-     - `ERROR`: inverter disconnection, database errors, unrecoverable faults
-     - `INFO` on shutdown: "received signal, shutting down...", "HTTP server stopped",
-       "inverter connection closed", "database closed", "daemon shut down cleanly"
-     - `DEBUG` (requires `-debug` flag): individual sensor values on each poll tick,
-       HTTP request method+path+latency, SQL query details
-7. **Integration with existing code**
-   - The daemon imports `goodwe.Inverter`, `discovery.Discover()`
-   - Reuses the existing transport and sensor infrastructure
-8. **Documentation**
-   - Update `README.md` with daemon usage
-   - Add examples:
-     ```
-     # Default DB location (~/.goodwe/goodwe.db), poll every 15s
-     goodwe-daemon -inverterip 192.168.1.151 -listen :8080 -dashboard -poll 15s
 
-     # Custom database path
-     goodwe-daemon -inverterip 192.168.1.151 -listen :8080 -dbstore sqlite:///var/lib/goodwe/history.db
+Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed below each.
 
-     # Purge data older than a specific date
-     goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -purge 2026-01-01
-     ```
+1. **Add SQLite dependency** — ✅ `modernc.org/sqlite` in `go.mod`
+2. **Create `pkg/db/store.go`**
+   - `Open(path string) (*Store, error)` — ✅ opens/creates DB, runs migrations
+   - `BeginTx(ctx) (*Tx, error)` — ❌ not yet implemented
+   - `InsertSample(ctx, name, value, unit, t time.Time) error` — ✅ implemented (auto-commit only)
+   - `QuerySamples(ctx, name string, since, until time.Time, limit int) ([]Sample, error)` — ✅ (`QueryRawSamples`)
+   - `QueryAggregated(ctx, name, bucket string, since, until time.Time) ([]Aggregate, error)` — ❌ pending
+   - `RunHourlyAggregation(ctx) error` — ❌ pending
+   - `RunDailyAggregation(ctx) error` — ❌ pending
+   - `PurgeRawSamples(ctx, before time.Time) error` — ❌ pending
+   - `PurgeHourlySamples(ctx, before time.Time) error` — ❌ pending
+3. **Create `pkg/daemon/daemon.go`** — ✅ skeleton done, missing sub-items:
+   - Wrap poll inserts in `BeginTx()/Commit()` — ❌ currently single inserts
+   - Inverter reconnection on poll failure — ❌ currently exits on error
+   - Gap backfill on startup (`LastSampleTime`) — ❌ not wired
+   - Hourly/daily aggregation triggers — ❌ pending
+4. **Create `pkg/api/handler.go`** — ✅ routes done, missing:
+   - `/api/status` endpoint — ❌ pending
+   - Purge endpoints — ❌ pending
+   - `/dashboard` — placeholder only, real embed pending
+5. **Create `pkg/dashboard/`** — ❌ not started
+6. **Create `cmd/goodwe-daemon/main.go`** — ✅ done
+7. **Integration with existing code** — ✅ done
+8. **Documentation** — ✅ README updated
 
 #### DSN Format
 The `-dbstore` flag uses a URI scheme to specify the database backend and location:
@@ -546,11 +486,10 @@ Python detects inverter capabilities from serial number:
 | `cmd/goodwe/main.go` | CLI with flags: `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`, `-version` |
 | `cmd/goodwe-daemon/main.go` | Daemon entrypoint — flag parsing, DB init, HTTP + poll loop orchestration |
 | `pkg/db/store.go` | Database interface + SQLite implementation, transactions, WAL mode |
-| `pkg/db/migrations.go` | Auto-run schema creation + migrations |
-| `pkg/db/aggregation.go` | Hourly/daily rollup queries |
-| `pkg/daemon/daemon.go` | Poll loop, inverter reconnection with backoff, aggregation scheduler |
-| `pkg/api/handler.go` | HTTP routes, CORS middleware, request logging (debug-gated) |
-| `pkg/dashboard/` (embedded) | Static HTML + JS dashboard files |
+| `pkg/db/store.go` | SQLite store: schema, migrations, identity, samples, queries (all in one file) |
+| `pkg/daemon/daemon.go` | Poll loop, identity verification, state tracking |
+| `pkg/api/handler.go` | HTTP routes, CORS + logging middleware, daemon + store interfaces |
+| `pkg/dashboard/` (not yet created) | Static HTML + JS dashboard files |
 | `.goreleaser.yaml` | GoReleaser build config (linux/darwin, amd64/arm64) |
 | `.github/workflows/ci.yml` | CI: test + lint + snapshot build on master push |
 | `.github/workflows/release.yml` | Release: goreleaser draft on `v*.*.*` tag |
