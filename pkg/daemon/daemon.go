@@ -226,12 +226,16 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 			"serial", info.SerialNumber,
 			"model", info.Model,
 			"rated_power", info.RatedPower)
-		if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model, info.RatedPower); err != nil {
+		if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model,
+			info.Firmware, info.DSPVersion, info.ARMVersion, info.RatedPower); err != nil {
 			return fmt.Errorf("store inverter identity: %w", err)
 		}
 		d.inverterIdentity = &db.InverterIdentity{
 			Serial:     info.SerialNumber,
 			Model:      info.Model,
+			Firmware:   info.Firmware,
+			DSPVersion: info.DSPVersion,
+			ARMVersion: info.ARMVersion,
 			RatedPower: info.RatedPower,
 		}
 
@@ -255,7 +259,8 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 	}
 
 	slog.Info("Inverter identity verified", "serial", info.SerialNumber)
-	if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model, info.RatedPower); err != nil {
+	if err := d.store.SetInverterIdentity(ctx, info.SerialNumber, info.Model,
+		info.Firmware, info.DSPVersion, info.ARMVersion, info.RatedPower); err != nil {
 		slog.Warn("Failed to update inverter identity", "error", err)
 	}
 

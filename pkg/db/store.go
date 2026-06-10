@@ -43,6 +43,9 @@ import (
 type InverterIdentity struct {
 	Serial     string
 	Model      string
+	Firmware   string
+	DSPVersion string
+	ARMVersion string
 	RatedPower int
 	FirstSeen  time.Time
 	LastSeen   time.Time
@@ -97,10 +100,12 @@ func (s *Store) Close() error {
 // GetInverterIdentity returns the stored inverter identity, or nil if not yet set.
 func (s *Store) GetInverterIdentity(ctx context.Context) (*InverterIdentity, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT serial, model, rated_power, first_seen, last_seen FROM inverter_identity LIMIT 1`)
+		`SELECT serial, model, firmware, dsp_version, arm_version, rated_power, first_seen, last_seen
+		 FROM inverter_identity LIMIT 1`)
 
 	var ident InverterIdentity
-	if err := row.Scan(&ident.Serial, &ident.Model, &ident.RatedPower, &ident.FirstSeen, &ident.LastSeen); err != nil {
+	if err := row.Scan(&ident.Serial, &ident.Model, &ident.Firmware, &ident.DSPVersion,
+		&ident.ARMVersion, &ident.RatedPower, &ident.FirstSeen, &ident.LastSeen); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -110,16 +115,19 @@ func (s *Store) GetInverterIdentity(ctx context.Context) (*InverterIdentity, err
 }
 
 // SetInverterIdentity inserts or updates the inverter identity.
-func (s *Store) SetInverterIdentity(ctx context.Context, serial, model string, ratedPower int) error {
+func (s *Store) SetInverterIdentity(ctx context.Context, serial, model, firmware, dspVersion, armVersion string, ratedPower int) error {
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO inverter_identity (serial, model, rated_power, first_seen, last_seen)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO inverter_identity (serial, model, firmware, dsp_version, arm_version, rated_power, first_seen, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(serial) DO UPDATE SET
 		   model = excluded.model,
+		   firmware = excluded.firmware,
+		   dsp_version = excluded.dsp_version,
+		   arm_version = excluded.arm_version,
 		   rated_power = excluded.rated_power,
 		   last_seen = excluded.last_seen`,
-		serial, model, ratedPower, now, now)
+		serial, model, firmware, dspVersion, armVersion, ratedPower, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to set inverter identity: %w", err)
 	}
@@ -170,12 +178,21 @@ func (s *Store) QueryRawSamples(ctx context.Context, name string, since, until t
 // Returns nil if there are no samples.
 func (s *Store) LastSampleTime(ctx context.Context) (*time.Time, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT MAX(sampled_at) FROM sensor_samples`)
-	sampledAt := sql.NullTime{}
+	var sampledAt sql.NullString
 	if err := row.Scan(&sampledAt); err != nil {
 		return nil, fmt.Errorf("query last sample time: %w", err)
 	}
-	if sampledAt.Valid {
-		return &sampledAt.Time, nil
+	if sampledAt.Valid && sampledAt.String != "" {
+		// SQLite stores TIMESTAMP as TEXT; parse with RFC3339 fractional seconds.
+		t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", sampledAt.String)
+		if err != nil {
+			// Fall back to RFC3339 parsing.
+			t, err = time.Parse(time.RFC3339Nano, sampledAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse last sample time %q: %w", sampledAt.String, err)
+			}
+		}
+		return &t, nil
 	}
 	return nil, nil
 }
@@ -244,8 +261,11 @@ func migrate(db *sql.DB) error {
 	`); err != nil {
 		return err
 	}
-	// Add rated_power column for databases created before it was added.
+	// Add columns for databases created before they existed (non-fatal if already present).
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN rated_power INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN firmware TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN dsp_version TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN arm_version TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 

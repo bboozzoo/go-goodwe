@@ -76,6 +76,7 @@ type DaemonStatus interface {
 
 // SensorStore is the interface for reading sensor data from the database.
 type SensorStore interface {
+	GetInverterIdentity(ctx context.Context) (*db.InverterIdentity, error)
 	QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
 	LatestSample(ctx context.Context, name string) (*db.Sample, error)
 	LastSampleTime(ctx context.Context) (*time.Time, error)
@@ -348,13 +349,14 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 
 // inverterInfo is the JSON body for GET /api/info.
 type inverterInfo struct {
-	Serial   string `json:"serial"`
-	Model    string `json:"model"`
-	Firmware string `json:"firmware"`
-	Rated    int    `json:"rated_power"`
-	DSP      string `json:"dsp_version"`
-	ARM      string `json:"arm_version"`
-	Error    string `json:"error,omitempty"`
+	Serial   string  `json:"serial"`
+	Model    string  `json:"model"`
+	Firmware string  `json:"firmware"`
+	Rated    int     `json:"rated_power"`
+	DSP      string  `json:"dsp_version"`
+	ARM      string  `json:"arm_version"`
+	LastPoll *string `json:"last_poll_time,omitempty"`
+	Error    string  `json:"error,omitempty"`
 }
 
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +365,40 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check daemon state before attempting to query the inverter.
+	// Try reading from database first (no inverter hit).
+	if h.store != nil {
+		ident, err := h.store.GetInverterIdentity(r.Context())
+		if err != nil {
+			slog.Warn("Failed to read inverter identity from DB", "error", err)
+		} else if ident != nil {
+			var lastPoll *string
+			if last, err := h.store.LastSampleTime(r.Context()); err == nil && last != nil {
+				s := last.Format(time.RFC3339)
+				lastPoll = &s
+			}
+
+			var errStr string
+			if h.daemon != nil {
+				if verr := h.daemon.VerificationError(); verr != nil {
+					errStr = verr.Error()
+				}
+			}
+
+			writeJSON(w, http.StatusOK, inverterInfo{
+				Serial:   ident.Serial,
+				Model:    ident.Model,
+				Firmware: ident.Firmware,
+				Rated:    ident.RatedPower,
+				DSP:      ident.DSPVersion,
+				ARM:      ident.ARMVersion,
+				LastPoll: lastPoll,
+				Error:    errStr,
+			})
+			return
+		}
+	}
+
+	// Fall back to reading from inverter directly.
 	ds := h.daemon
 	if ds != nil {
 		switch ds.InverterState() {
@@ -385,7 +420,6 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for identity verification errors.
 	var errStr string
 	if ds != nil {
 		if err := ds.VerificationError(); err != nil {
