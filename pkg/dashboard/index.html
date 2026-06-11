@@ -309,12 +309,22 @@ function onSensorClick(name) {
   let graph = state.graphs.find(g => g.unit === unit);
 
   if (graph) {
-    // Add sensor to existing graph
-    if (!graph.sensorNames.includes(name)) {
-      graph.sensorNames.push(name);
-      updateSensorListSelection();
-      refreshGraph(graph);
+    // Check if sensor is already in this graph — remove it.
+    const idx = graph.sensorNames.indexOf(name);
+    if (idx !== -1) {
+      graph.sensorNames.splice(idx, 1);
+      if (graph.sensorNames.length === 0) {
+        closeGraph(graph.id);
+      } else {
+        updateSensorListSelection();
+        refreshGraph(graph);
+      }
+      return;
     }
+    // Add sensor to existing graph
+    graph.sensorNames.push(name);
+    updateSensorListSelection();
+    refreshGraph(graph);
   } else {
     // Create new graph
     const id = ++state.graphCounter;
