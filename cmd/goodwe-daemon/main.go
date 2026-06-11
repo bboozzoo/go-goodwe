@@ -142,7 +142,7 @@ func main() {
 	dmn := daemon.New(inverter, store, *pollInterval)
 
 	// Create the API handler with the inverter, daemon status, and store.
-	handler := api.New(inverter, dmn, store, *debug)
+	handler := api.New(inverter, dmn, store, *inverterIP, *debug)
 
 	// Start HTTP server.
 	httpServer := &http.Server{

@@ -87,17 +87,18 @@ type SensorStore interface {
 
 // Handler serves the REST API endpoints.
 type Handler struct {
-	inverter goodwe.Inverter // may be nil when no inverter is configured
-	daemon   DaemonStatus    // may be nil
-	store    SensorStore     // may be nil; aggregate endpoint returns 501
-	debug    bool
-	mux      http.Handler
+	inverter   goodwe.Inverter // may be nil when no inverter is configured
+	daemon     DaemonStatus    // may be nil
+	store      SensorStore     // may be nil; aggregate endpoint returns 501
+	inverterIP string          // IP address of the inverter, for display
+	debug      bool
+	mux        http.Handler
 }
 
 // New creates an API handler. inverter, daemonStatus, and sensorStore may
 // be nil; endpoints return appropriate error codes when dependencies are missing.
-func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, debug bool) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, debug: debug}
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, debug bool) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, inverterIP: inverterIP, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -359,6 +360,7 @@ type inverterInfo struct {
 	Rated    int     `json:"rated_power"`
 	DSP      string  `json:"dsp_version"`
 	ARM      string  `json:"arm_version"`
+	IP       string  `json:"inverter_ip"`
 	LastPoll *string `json:"last_poll_time,omitempty"`
 	Error    string  `json:"error,omitempty"`
 }
@@ -395,6 +397,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 				Rated:    ident.RatedPower,
 				DSP:      ident.DSPVersion,
 				ARM:      ident.ARMVersion,
+				IP:       h.inverterIP,
 				LastPoll: lastPoll,
 				Error:    errStr,
 			})
@@ -445,6 +448,7 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		Rated:    info.RatedPower,
 		DSP:      info.DSPVersion,
 		ARM:      info.ARMVersion,
+		IP:       h.inverterIP,
 		Error:    errStr,
 	}
 	writeJSON(w, http.StatusOK, resp)

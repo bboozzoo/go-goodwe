@@ -74,6 +74,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="status" id="inverter-status">
     <span>Serial: <span class="val" id="info-serial">-</span></span>
     <span>Model: <span class="val" id="info-model">-</span></span>
+    <span>IP: <span class="val" id="info-ip">-</span></span>
     <span>Rated: <span class="val" id="info-rated">-</span></span>
     <span>Last poll: <span class="val" id="info-lastpoll">-</span></span>
     <span>Connected: <span class="val" id="info-connected">-</span></span>
@@ -169,6 +170,7 @@ async function loadInfo() {
     const info = await fetchJSON('/api/info');
     document.getElementById('info-serial').textContent = info.serial || '-';
     document.getElementById('info-model').textContent = info.model || '-';
+    document.getElementById('info-ip').textContent = info.inverter_ip || '-';
     document.getElementById('info-rated').textContent = info.rated_power ? info.rated_power + ' W' : '-';
     document.getElementById('info-lastpoll').textContent = info.last_poll_time || '-';
     if (info.error) {
