@@ -246,6 +246,22 @@ async function fetchSensorData(sensorName, since, until, limit) {
   return fetchJSON(`/api/data/${encodeURIComponent(sensorName)}/aggregate?${params}`);
 }
 
+const MAX_POINTS = 300;
+
+function downsample(data, max) {
+  if (data.length <= max) return data;
+  const step = Math.ceil(data.length / max);
+  const result = [];
+  for (let i = 0; i < data.length; i += step) {
+    result.push(data[i]);
+  }
+  // Always include the last point.
+  if (result[result.length - 1] !== data[data.length - 1]) {
+    result.push(data[data.length - 1]);
+  }
+  return result;
+}
+
 // ---- Sensor list ----
 function renderSensorList() {
   const filter = (document.getElementById('sensor-filter').value || '').toLowerCase();
@@ -352,9 +368,11 @@ async function refreshGraph(graph) {
     try {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
-      const values = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
+      const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
+      const values = downsample(raw, MAX_POINTS);
       datasets.push({ label: name, data: values, borderColor: colorForIndex(datasets.length),
-                      fill: false, tension: 0.2, spanGaps: false, pointRadius: 0 });
+                      fill: false, tension: 0.1, spanGaps: false, pointRadius: 0,
+                      borderWidth: 1 });
     } catch (e) {
       console.warn('Failed to fetch', name, e);
     }
