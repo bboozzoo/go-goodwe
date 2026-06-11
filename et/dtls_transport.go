@@ -31,17 +31,25 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/pion/dtls/v2"
 )
 
+const (
+	dtlsReadTimeout  = 5 * time.Second
+	dtlsWriteTimeout = 5 * time.Second
+)
+
 // dtlsTransport implements Transport over DTLS with Modbus RTU framing.
 type dtlsTransport struct {
+	mu   sync.Mutex
 	ip   string
 	port int
 	conn net.Conn
@@ -57,6 +65,15 @@ func NewDTLSTransport(ip string, port int) Transport {
 
 // Connect establishes the DTLS connection to the inverter.
 func (t *dtlsTransport) Connect(ctx context.Context) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Close any stale connection first.
+	if t.conn != nil {
+		_ = t.conn.Close()
+		t.conn = nil
+	}
+
 	addr := net.JoinHostPort(t.ip, strconv.Itoa(t.port))
 	slog.Debug("Attempting DTLS connection", "address", addr)
 
@@ -85,19 +102,52 @@ func (t *dtlsTransport) Connect(ctx context.Context) error {
 
 // Close closes the DTLS connection.
 func (t *dtlsTransport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if t.conn != nil {
 		slog.Debug("Closing DTLS connection")
-		return t.conn.Close()
+		err := t.conn.Close()
+		t.conn = nil
+		return err
 	}
 	return nil
 }
 
 // ReadRegisters performs a Modbus RTU bulk register read over the DTLS connection.
+// Automatically reconnects if the connection has been closed by the remote end.
 func (t *dtlsTransport) ReadRegisters(ctx context.Context, startReg uint16, quantity uint16) ([]byte, error) {
-	if t.conn == nil {
-		return nil, errors.New("no DTLS connection established")
+	t.mu.Lock()
+	conn := t.conn
+	t.mu.Unlock()
+
+	if conn == nil {
+		return t.readWithReconnect(ctx, startReg, quantity)
 	}
 
+	data, err := t.doRead(conn, startReg, quantity)
+	if err != nil && isConnClosed(err) {
+		slog.Debug("DTLS connection closed, reconnecting...", "error", err)
+		return t.readWithReconnect(ctx, startReg, quantity)
+	}
+	return data, err
+}
+
+// readWithReconnect reconnects and performs the read.
+func (t *dtlsTransport) readWithReconnect(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
+	if err := t.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("reconnect failed: %w", err)
+	}
+
+	t.mu.Lock()
+	conn := t.conn
+	t.mu.Unlock()
+
+	return t.doRead(conn, startReg, quantity)
+}
+
+// doRead performs a single Modbus RTU read over the given connection.
+func (t *dtlsTransport) doRead(conn net.Conn, startReg, quantity uint16) ([]byte, error) {
 	// Modbus RTU over DTLS:
 	// Slave ID (1) | Function Code (1) | Register Address (2) | Quantity (2) | CRC (2)
 	request := make([]byte, 8)
@@ -111,14 +161,19 @@ func (t *dtlsTransport) ReadRegisters(ctx context.Context, startReg uint16, quan
 
 	slog.Debug("Sending Modbus RTU bulk request", "start", startReg, "qty", quantity, "payload", hex.EncodeToString(request))
 
-	_, err := t.conn.Write(request)
-	if err != nil {
+	if err := conn.SetWriteDeadline(time.Now().Add(dtlsWriteTimeout)); err != nil {
+		return nil, fmt.Errorf("set write deadline: %w", err)
+	}
+	if _, err := conn.Write(request); err != nil {
 		return nil, fmt.Errorf("modbus write error: %w", err)
 	}
 
 	// Expected RTU: AA55(2) | SlaveID(1) | Func(1) | ByteCount(1) | Data(N) | CRC(2)
 	respBuf := make([]byte, 4096)
-	n, err := t.conn.Read(respBuf)
+	if err := conn.SetReadDeadline(time.Now().Add(dtlsReadTimeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
+	n, err := conn.Read(respBuf)
 	if err != nil {
 		return nil, fmt.Errorf("modbus read error: %w", err)
 	}
@@ -127,6 +182,18 @@ func (t *dtlsTransport) ReadRegisters(ctx context.Context, startReg uint16, quan
 	slog.Debug("Received Modbus RTU bulk response", "payload", hex.EncodeToString(responseBytes))
 
 	return parseModbusBulkResponse(responseBytes)
+}
+
+// isConnClosed checks if the error indicates the connection was closed.
+func isConnClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "conn is closed") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "reset by peer")
 }
 
 // calculateCRC16 calculates the Modbus CRC16 checksum.

@@ -31,16 +31,22 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
+)
+
+const (
+	tcpReadTimeout  = 10 * time.Second
+	tcpWriteTimeout = 5 * time.Second
 )
 
 // tcpTransport implements Transport over plain TCP with Modbus TCP framing.
 type tcpTransport struct {
+	mu   sync.Mutex
 	ip   string
 	port int
 	conn net.Conn
@@ -58,6 +64,15 @@ func NewTCPTransport(ip string, port int) Transport {
 
 // Connect establishes the TCP connection to the inverter.
 func (t *tcpTransport) Connect(ctx context.Context) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Close any stale connection first.
+	if t.conn != nil {
+		_ = t.conn.Close()
+		t.conn = nil
+	}
+
 	addr := net.JoinHostPort(t.ip, strconv.Itoa(t.port))
 	slog.Debug("Attempting TCP connection", "address", addr)
 
@@ -73,30 +88,69 @@ func (t *tcpTransport) Connect(ctx context.Context) error {
 
 // Close closes the TCP connection.
 func (t *tcpTransport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if t.conn != nil {
 		slog.Debug("Closing TCP connection")
-		return t.conn.Close()
+		err := t.conn.Close()
+		t.conn = nil
+		return err
 	}
 	return nil
 }
 
 // ReadRegisters performs a Modbus TCP read holding registers request.
+// Automatically reconnects if the connection has been closed by the remote end.
 func (t *tcpTransport) ReadRegisters(ctx context.Context, startReg uint16, quantity uint16) ([]byte, error) {
-	if t.conn == nil {
-		return nil, errors.New("no TCP connection established")
+	t.mu.Lock()
+	conn := t.conn
+	t.mu.Unlock()
+
+	if conn == nil {
+		return t.readWithReconnect(ctx, startReg, quantity)
 	}
 
+	data, err := t.doRead(conn, startReg, quantity)
+	if err != nil && isConnClosed(err) {
+		slog.Debug("TCP connection closed, reconnecting...", "error", err)
+		return t.readWithReconnect(ctx, startReg, quantity)
+	}
+	return data, err
+}
+
+// readWithReconnect establishes a fresh connection and performs the read.
+func (t *tcpTransport) readWithReconnect(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
+	if err := t.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("reconnect failed: %w", err)
+	}
+
+	t.mu.Lock()
+	conn := t.conn
+	t.mu.Unlock()
+
+	return t.doRead(conn, startReg, quantity)
+}
+
+// doRead performs a single Modbus TCP read over the given connection.
+func (t *tcpTransport) doRead(conn net.Conn, startReg, quantity uint16) ([]byte, error) {
 	req := t.buildRequest(startReg, quantity)
 	slog.Debug("Sending Modbus TCP request", "start", startReg, "qty", quantity, "payload", hex.EncodeToString(req))
 
-	_, err := t.conn.Write(req)
+	if err := conn.SetWriteDeadline(time.Now().Add(tcpWriteTimeout)); err != nil {
+		return nil, fmt.Errorf("set write deadline: %w", err)
+	}
+	_, err := conn.Write(req)
 	if err != nil {
 		return nil, fmt.Errorf("modbus write error: %w", err)
 	}
 
 	// Read response: MBAP(7) + Func(1) + ByteCount(1) + Data(N)
 	respBuf := make([]byte, 4096)
-	n, err := t.conn.Read(respBuf)
+	if err := conn.SetReadDeadline(time.Now().Add(tcpReadTimeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
+	n, err := conn.Read(respBuf)
 	if err != nil {
 		return nil, fmt.Errorf("modbus read error: %w", err)
 	}
