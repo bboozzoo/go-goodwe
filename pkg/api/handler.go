@@ -28,11 +28,14 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bboozzoo/go-goodwe"
@@ -117,6 +120,7 @@ func (h *Handler) buildRoutes() http.Handler {
 
 	// Wrap in middleware chain: innermost first.
 	var handler http.Handler = mux
+	handler = gzipMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = loggingMiddleware(h.debug, handler)
 	return handler
@@ -475,6 +479,38 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// gzipMiddleware compresses responses with gzip when the client supports it.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		gw, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+
+		gzw := &gzipResponseWriter{ResponseWriter: w, Writer: gw}
+		next.ServeHTTP(gzw, r)
+		_ = gw.Close()
+	})
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	Writer io.Writer
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) {
+	return g.Writer.Write(b)
 }
 
 // loggingMiddleware logs every request.
