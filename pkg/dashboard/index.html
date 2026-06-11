@@ -264,6 +264,23 @@ function downsample(data, max) {
   return result;
 }
 
+const GAP_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+function insertNullGaps(data) {
+  if (data.length < 2) return data;
+  const result = [];
+  for (let i = 0; i < data.length - 1; i++) {
+    result.push(data[i]);
+    const gap = data[i + 1].x - data[i].x;
+    if (gap > GAP_THRESHOLD_MS) {
+      // Insert a null point midway between the two points to break the line.
+      result.push({ x: (data[i].x + data[i + 1].x) / 2, y: null });
+    }
+  }
+  result.push(data[data.length - 1]);
+  return result;
+}
+
 // ---- Sensor list ----
 function renderSensorList() {
   const filter = (document.getElementById('sensor-filter').value || '').toLowerCase();
@@ -381,7 +398,8 @@ async function refreshGraph(graph) {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
       const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
-      const values = downsample(raw, MAX_POINTS);
+      const down = downsample(raw, MAX_POINTS);
+      const values = insertNullGaps(down);
       datasets.push({ label: name, data: values, borderColor: colorForIndex(datasets.length),
                       fill: false, tension: 0.1, spanGaps: false, pointRadius: 0,
                       borderWidth: 1 });
