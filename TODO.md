@@ -127,13 +127,14 @@ Data already within existing read windows or small isolated changes.
 - [ ] Conditionally enable via serial number match (`BAT_2_MODELS` = `"25KET"`, `"29K9ET"`) or `rated_power >= 25000`
 
 ### DTLS Read Deadline + Retry
-- [ ] Set `SetReadDeadline(time.Now().Add(3 * time.Second))` on each `dtlsConn.Read()`
-- [ ] On `os.ErrDeadlineExceeded`: retry the read (the inverter occasionally drops packets)
-- [ ] Make timeout configurable on the service
+- [x] Set `SetReadDeadline(time.Now().Add(3 * time.Second))` on each `dtlsConn.Read()`
+- [x] Auto-reconnect on `isConnClosed` errors (both DTLS and TCP transports)
+- [x] Read/write deadlines: 5s DTLS, 10s TCP
 
 ### Poll Loop Reconnection
-- [ ] CLI `-poll` loop: on `ReadSensor` error, attempt `reconnect()` and retry
-- [ ] Add max consecutive failures before giving up entirely
+- [x] State machine with backoff: 5s initial, 5min max, reset on poll success
+- [x] Startup connect failure no longer exits daemon — enters backoff
+- [x] Poll failure disconnects and retries from scratch via backoff
 
 ---
 
@@ -174,7 +175,7 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/daemon/daemon.go` — Poll loop with `GetSensors` + `InsertSample` | Done |
 | `pkg/daemon/daemon.go` — Identity verification (`verifyIdentity`) | Done |
 | `pkg/daemon/daemon.go` — `InverterConnState` tracking | Done |
-| `pkg/daemon/daemon.go` — Inverter reconnection on failure | Pending |
+| `pkg/daemon/daemon.go` — Inverter reconnection on failure (state machine with backoff) | Done |
 | `pkg/daemon/daemon.go` — Gap backfill on startup | Pending |
 | `pkg/daemon/daemon.go` — Hourly/daily aggregation triggers | Pending |
 | `pkg/api/handler.go` — Routes: health, sensors, info, data, aggregate | Done |
@@ -190,6 +191,8 @@ exposes a REST API + embedded JS dashboard.
 | `cmd/goodwe-daemon/main.go` — Graceful shutdown (15s timeout) | Done |
 | `pkg/dashboard/` — Embedded HTML+JS single-page app | Done |
 | `pkg/dashboard/` — Sensor list sidebar with search filter | Done |
+| `pkg/dashboard/` — Insert null waypoints at time gaps > 10 min | Done |
+| `pkg/dashboard/` — 'No data' message when time range has no samples | Done |
 | `pkg/dashboard/` — Line charts with time range selector | Done |
 | `pkg/dashboard/` — Live mode toggle (auto-refresh) | Done |
 | `pkg/dashboard/` — Inverter status header (from DB) | Done |
@@ -224,13 +227,17 @@ cmd/goodwe-daemon/        — daemon binary
   main.go                 — flag parsing + daemon orchestration
 pkg/daemon/
   daemon.go               — poll loop, identity verification, state tracking
+  daemon_test.go          — state machine unit tests
 pkg/db/
   store.go                — DB interface + SQLite implementation (includes
                            schema, queries, migrations — no separate files)
+  store_test.go           — db unit tests (CRUD, sanitization, DSN parsing)
 pkg/api/
   handler.go              — HTTP handler, routes, CORS + logging middleware
+  handler_test.go         — API unit tests (all endpoints, CORS, gzip)
 pkg/dashboard/
-  (not yet created)       — static HTML/CSS/JS files (embedded via embed.FS)
+  dashboard.go            — embed wrapper
+  index.html              — single-page dashboard app
 ```
 
 #### Database Schema (SQLite)
@@ -333,9 +340,9 @@ Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed belo
    - `RunDailyAggregation(ctx) error` — ❌ pending
    - `PurgeRawSamples(ctx, before time.Time) error` — ❌ pending
    - `PurgeHourlySamples(ctx, before time.Time) error` — ❌ pending
-3. **Create `pkg/daemon/daemon.go`** — ✅ done, missing sub-items:
+3. **Create `pkg/daemon/daemon.go`** — ✅ done (including state machine with
+   backoff and reconnection), missing sub-items:
    - Wrap poll inserts in `BeginTx()/Commit()` — ❌ currently single inserts
-   - Inverter reconnection on poll failure — ❌ currently exits on error
    - Gap backfill on startup (`LastSampleTime`) — ❌ not wired
    - Hourly/daily aggregation triggers — ❌ pending
 4. **Create `pkg/api/handler.go`** — ✅ routes done, missing:
@@ -497,7 +504,7 @@ sensor.
 - [x] Document the REST API in Go doc comments on handler methods
 - [ ] Add API usage examples to README (curl commands for each endpoint)
 - [ ] Add database management section to README (backup, DSN, purge)
-- [ ] Add unit tests for:
+- [x] Add unit tests for:
   - `/api/health` response format and status codes
   - `/api/info` with and without inverter configured
   - `/api/sensors` response format and sensor count
@@ -535,8 +542,11 @@ sensor.
 | `cmd/goodwe/main.go` | CLI with flags: `-ip`, `-readsensor`, `-poll`, `-listsensors`, `-info`, `-version` |
 | `cmd/goodwe-daemon/main.go` | Daemon entrypoint — flag parsing, DB init, HTTP + poll loop orchestration |
 | `pkg/db/store.go` | SQLite store: schema, migrations, identity, samples, queries |
+| `pkg/db/store_test.go` | DB unit tests: CRUD, sanitization, DSN parsing |
 | `pkg/daemon/daemon.go` | Poll loop, identity verification, state tracking |
+| `pkg/daemon/daemon_test.go` | State machine unit tests |
 | `pkg/api/handler.go` | HTTP routes, CORS + logging middleware, daemon + store interfaces |
+| `pkg/api/handler_test.go` | API unit tests: all endpoints, CORS, gzip |
 | `pkg/dashboard/dashboard.go` | Embed wrapper serving the dashboard HTML |
 | `pkg/dashboard/index.html` | Single-page dashboard app (Chart.js, dark theme) |
 | `.goreleaser.yaml` | GoReleaser build config (linux/darwin, amd64/arm64) |
