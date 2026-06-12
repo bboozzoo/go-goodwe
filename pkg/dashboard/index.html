@@ -410,6 +410,31 @@ async function refreshGraph(graph) {
 
   if (graph.chart) {
     graph.chart.destroy();
+    graph.chart = null;
+  }
+
+  if (datasets.length === 0 || datasets.every(d => d.data.length === 0)) {
+    // Show a 'no data' message instead of an empty chart.
+    const card = document.getElementById(`graph-${graph.id}`);
+    if (card) {
+      let msg = card.querySelector('.no-data-msg');
+      if (!msg) {
+        msg = document.createElement('div');
+        msg.className = 'no-data-msg';
+        msg.style.cssText = 'text-align:center;padding:2rem;color:#64748b;font-size:0.85rem';
+        card.querySelector('.graph-header').after(msg);
+      }
+      const rangeLabels = { '1h':'last hour', '6h':'last 6 hours', '24h':'last 24 hours', '7d':'last 7 days', '30d':'last 30 days' };
+      msg.textContent = `No data for ${rangeLabels[state.timeRange] || 'selected range'}. Make sure the daemon is running with -poll.`;
+    }
+    return;
+  }
+
+  // Remove any previous no-data message.
+  const card = document.getElementById(`graph-${graph.id}`);
+  if (card) {
+    const msg = card.querySelector('.no-data-msg');
+    if (msg) msg.remove();
   }
 
   const ctx = canvas.getContext('2d');
