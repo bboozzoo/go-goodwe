@@ -549,17 +549,22 @@ func loggingMiddleware(debug bool, next http.Handler) http.Handler {
 		next.ServeHTTP(lrw, r)
 
 		latency := time.Since(start)
+		// Include query parameters in the log when present.
+		path := r.URL.Path
+		if r.URL.RawQuery != "" {
+			path = path + "?" + r.URL.RawQuery
+		}
 		if lrw.status >= 400 {
 			slog.Warn("HTTP request error",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"status", lrw.status,
 				"latency", latency.String(),
 			)
 		} else if debug {
 			slog.Debug("HTTP request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"status", lrw.status,
 				"latency", latency.String(),
 			)
