@@ -142,6 +142,7 @@ type inverterState struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// handleHealth returns service health status including inverter connection state.
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := "ok"
 	var invState *inverterState
@@ -203,6 +204,7 @@ type sensorEntry struct {
 	Category string `json:"category"`
 }
 
+// handleListSensors returns all available sensor names grouped by category.
 func (h *Handler) handleListSensors(w http.ResponseWriter, r *http.Request) {
 	groups := et.GetSensorNamesByBlock()
 
@@ -232,6 +234,7 @@ type liveDataResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// handleGetData performs a live Modbus read for a single sensor.
 func (h *Handler) handleGetData(w http.ResponseWriter, r *http.Request) {
 	if h.inverter == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
@@ -260,6 +263,8 @@ func (h *Handler) handleGetData(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleGetAggregate returns historical sensor samples from the database.
+// Supports ?since=, ?until=, ?limit=, and ?latest=true query parameters.
 func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	sensorName := r.PathValue("sensor")
 	if sensorName == "" {
@@ -374,6 +379,8 @@ type inverterInfo struct {
 	Error    string  `json:"error,omitempty"`
 }
 
+// handleInfo returns inverter identity and last poll time from the database.
+// Falls back to a live Modbus read when no database is configured.
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if h.inverter == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
@@ -466,10 +473,12 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleDashboard serves the embedded single-page dashboard.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	dashboard.Handler().ServeHTTP(w, r)
 }
 
+// handleRootRedirect redirects / to /dashboard.
 func (h *Handler) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -478,6 +487,7 @@ func (h *Handler) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+// handleNotFound returns a plain 404 for unknown API routes.
 func (h *Handler) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }

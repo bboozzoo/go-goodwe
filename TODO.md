@@ -494,7 +494,9 @@ sensor.
 ## 🛠 Robustness & Polish
 
 ### Daemon
-- [ ] Document the REST API in Go doc comments on handler methods
+- [x] Document the REST API in Go doc comments on handler methods
+- [ ] Add API usage examples to README (curl commands for each endpoint)
+- [ ] Add database management section to README (backup, DSN, purge)
 - [ ] Add unit tests for:
   - `/api/health` response format and status codes
   - `/api/info` with and without inverter configured

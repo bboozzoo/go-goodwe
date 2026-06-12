@@ -89,3 +89,71 @@ Packet Dropping: The low-power embedded Wi-Fi chips on these dongles frequently
 drop packets or hit transient timeouts under load. Your Go network layer should
 use aggressive timeout deadlines (e.g., 2–3 seconds) and a retry mechanism
 rather than failing immediately on an EOF.
+
+## Daemon Architecture
+
+The daemon (`cmd/goodwe-daemon/`) is a persistent background service that polls
+the inverter periodically, stores sensor readings in a local SQLite database,
+and exposes a REST API + embedded JS dashboard.
+
+### State Machine
+
+The daemon poll loop implements an explicit state machine with backoff:
+
+    disconnected -> doConnect()
+      |-- success -> Connected -> doPoll()
+      |                |-- success -> wait(pollInterval) -> Connected
+      |                |-- error   -> close connection -> Disconnected
+      |-- error   -> wait(backoff, doubling 5s->10s->...->5min) -> Disconnected
+
+States: Disabled (no inverter), Disconnected (will retry), Connecting (in progress),
+Connected (verified), Failed (serial mismatch, permanent stop).
+State is exposed via `DaemonStatus` interface for the API handler.
+
+### Connection Transport
+
+- `et/tcp_transport.go`: Plain TCP + Modbus TCP framing (MBAP header, port 502)
+- `et/dtls_transport.go`: DTLS + Modbus RTU framing (UDP, port 8899)
+- Both auto-reconnect on closed connections with read/write deadlines (5s DTLS, 10s TCP)
+
+### Packages
+
+| Package | Purpose |
+|---------|---------|
+| `cmd/goodwe-daemon/` | Entrypoint: flag parsing, DB init, HTTP + poll loop orchestration |
+| `pkg/daemon/` | Poll loop with state machine, identity verification, DB backfill |
+| `pkg/db/` | SQLite store: schema, migrations, samples, identity, sanitization |
+| `pkg/api/` | HTTP handler, routes (health/info/sensors/data), CORS, gzip, logging |
+| `pkg/dashboard/` | Embedded single-page HTML+JS dashboard (Chart.js, dark theme) |
+
+### REST API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Service health: `{status, inverter: {connected, error}}` |
+| `GET` | `/api/info` | Inverter identity from DB: `{serial, model, firmware, rated_power, last_poll_time}` |
+| `GET` | `/api/sensors` | List all 199 sensors: `[{name, category}, ...]` |
+| `GET` | `/api/data/{sensor}` | Live Modbus read: `{name, value, unit, timestamp}` |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical from DB: `?since=&until=&limit=&latest=true` |
+| `GET` | `/dashboard` | Single-page dashboard |
+| `GET` | `/` | Redirect to `/dashboard` |
+
+### Database
+
+- SQLite via `modernc.org/sqlite` (pure Go, no CGO, WAL mode)
+- Default location: `~/.goodwe/goodwe.db`
+- Tables: `inverter_identity` (serial, model, firmware, versions, rated_power),
+  `sensor_samples` (raw readings with dual value/value_text columns)
+- Data sanitization at startup: purges physically impossible values based on unit
+  (e.g., W > rated_power*2, % > 100 or < 0, V > 600, A > 50)
+- Readable concurrently during writes via WAL mode
+
+### Dashboard
+
+- Single HTML file at `/dashboard`
+- Chart.js from CDN, dark theme (slate/blue palette)
+- Sensor list sidebar with search filter, grouped by category
+- Line charts with time range selector (1h, 6h, 24h, 7d, 30d)
+- Inserted null waypoints break lines at time gaps > 10 minutes
+- Live mode toggle (auto-refresh every 5s)
+- System status cards (grid mode, PV power, battery SoC, errors)
