@@ -14,7 +14,9 @@
 ## Development Workflow
 - **Code Quality**: 
   - All code must be `gofmt` clean.
-  - Use `golangci-lint` for verification.
+  - Use `golangci-lint` for verification (run `golangci-lint run ./...` before committing).
+  - Test files must pass linter too — suppressed errors are acceptable for trivial cases
+    (`_ = fn()` style is preferred over naked calls that errcheck would flag).
 - **Task Tracking**: Consult `TODO.md` for the current roadmap and pending items.
 - **Code Map**: See `TODO.md § 📁 Code Map` for a file-level overview of the codebase.
 - **Testing Strategy**: Refer to the Python test suite (`python/goodwe/tests/`) to understand expected behavior and protocol nuances.

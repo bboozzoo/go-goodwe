@@ -96,7 +96,7 @@ func runDaemonWithStore(t *testing.T, d *Daemon, store *db.Store, pollInterval t
 	if store == nil {
 		s, err := db.Open("sqlite://" + t.TempDir() + "/test.db")
 		require.NoError(t, err)
-		t.Cleanup(func() { s.Close() })
+		t.Cleanup(func() { _ = s.Close() })
 		store = s
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -186,7 +186,7 @@ func TestDaemon_SerialMismatch(t *testing.T) {
 	}
 	store, err := db.Open("sqlite://" + t.TempDir() + "/test.db")
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate a different serial.
 	err = store.SetInverterIdentity(context.Background(), "EXPECTED001", "GW-OLD",
@@ -214,7 +214,7 @@ func TestDaemon_PollFailsAndReconnects(t *testing.T) {
 	}
 	store, err := db.Open("sqlite://" + t.TempDir() + "/test.db")
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	d := New(inv, store, time.Hour)
 
@@ -237,7 +237,7 @@ func TestDaemon_IdentityStoredOnFirstConnect(t *testing.T) {
 	inv := &mockInverter{}
 	store, err := db.Open("sqlite://" + t.TempDir() + "/test.db")
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	d := New(inv, store, time.Hour)
 	d.doConnect(context.Background())
@@ -255,7 +255,7 @@ func TestDaemon_IdentityStoredOnFirstConnect(t *testing.T) {
 func TestDaemon_IdentityVerifiedOnSubsequentConnect(t *testing.T) {
 	store, err := db.Open("sqlite://" + t.TempDir() + "/test.db")
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate identity.
 	err = store.SetInverterIdentity(context.Background(), "TEST001", "GW-TEST",

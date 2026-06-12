@@ -42,13 +42,12 @@ func newTestStore(t *testing.T) *Store {
 	// Use a unique temp directory so parallel tests don't collide.
 	store, err := Open("sqlite://" + filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
-func samplePtr(v float64) *float64  { return &v }
-func textPtr(v string) *string      { return &v }
-func timePtr(t time.Time) *time.Time { return &t }
+func samplePtr(v float64) *float64 { return &v }
+func textPtr(v string) *string     { return &v }
 
 func TestInsertAndQuerySamples(t *testing.T) {
 	ctx := context.Background()
@@ -296,13 +295,13 @@ func TestConcurrentReadWrite(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 50; i++ {
-			s.InsertSample(ctx, "test", "V", time.Now(), samplePtr(float64(i)), nil)
+			_ = s.InsertSample(ctx, "test", "V", time.Now(), samplePtr(float64(i)), nil)
 		}
 		close(done)
 	}()
 
 	for i := 0; i < 20; i++ {
-		s.QueryRawSamples(ctx, "test", time.Now().Add(-time.Hour), time.Now(), 1000)
+		_, _ = s.QueryRawSamples(ctx, "test", time.Now().Add(-time.Hour), time.Now(), 1000)
 	}
 	<-done
 }
