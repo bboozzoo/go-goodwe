@@ -39,6 +39,11 @@ import (
 	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
 
+const (
+	backoffInitial = 5 * time.Second
+	backoffMax     = 5 * time.Minute
+)
+
 // Daemon manages the poll loop and aggregation scheduler.
 type Daemon struct {
 	inverter     goodwe.Inverter // may be nil when no inverter is configured
@@ -63,7 +68,7 @@ func New(inverter goodwe.Inverter, store *db.Store, pollInterval time.Duration) 
 	if inverter == nil {
 		d.connState = api.InverterStateDisabled
 	} else {
-		d.connState = api.InverterStateConnecting
+		d.connState = api.InverterStateDisconnected
 	}
 	return d
 }
@@ -98,8 +103,16 @@ func (d *Daemon) InverterIdentity() *db.InverterIdentity {
 	return d.inverterIdentity
 }
 
-// Run connects to the inverter, verifies its identity against the database,
-// and starts the poll loop. It blocks until ctx is cancelled.
+// Run implements the inverter connection state machine.
+//
+//	disconnected -> try connect()
+//	   if connected -> polling
+//	   if error -> backoff
+//	backoff -> wait -> disconnected
+//	polling -> try poll
+//	   if success -> waiting
+//	   if error -> disconnect -> disconnected
+//	waiting -> wait for poll tick -> polling
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.inverter == nil {
 		slog.Info("No inverter configured, poll loop disabled")
@@ -108,65 +121,105 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return nil
 	}
 
-	slog.Info("Connecting to inverter...")
-	if err := d.inverter.Connect(ctx); err != nil {
-		d.setState(api.InverterStateFailed, err)
-		return fmt.Errorf("inverter connect: %w", err)
-	}
-	slog.Info("Connected to inverter")
-
-	// Ensure disconnection on exit.
-	disconnect := func() {
-		slog.Info("Disconnecting from inverter...")
-		if err := d.inverter.Close(); err != nil {
-			slog.Warn("Error closing inverter connection", "error", err)
-		}
-	}
-	defer disconnect()
-
-	// Read inverter info and verify identity against the database.
-	if err := d.verifyIdentity(ctx); err != nil {
-		return fmt.Errorf("identity verification failed: %w", err)
-	}
-
-	if d.VerificationError() != nil {
-		slog.Warn("Inverter identity mismatch detected; polling disabled",
-			"error", d.VerificationError())
-		d.setState(api.InverterStateConnected, nil)
-		<-ctx.Done()
-		return nil
-	}
-
-	d.setState(api.InverterStateConnected, nil)
-
 	if d.pollInterval <= 0 {
 		slog.Info("Polling disabled (no -poll interval set)")
+		d.setState(api.InverterStateDisconnected, nil)
 		<-ctx.Done()
 		return nil
 	}
 
 	slog.Info("Poll loop started", "interval", d.pollInterval)
-	ticker := time.NewTicker(d.pollInterval)
-	defer ticker.Stop()
+	defer slog.Info("Poll loop stopped")
+
+	d.setState(api.InverterStateDisconnected, nil)
+
+	backoff := backoffInitial
+	timer := time.NewTimer(0) // fire immediately for first connect
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Poll loop stopped")
+			d.closeConnection()
 			return nil
-		case <-ticker.C:
-			d.pollOnce(ctx)
+
+		case <-timer.C:
+			switch d.getState() {
+			case api.InverterStateDisconnected:
+				d.doConnect(ctx)
+
+			case api.InverterStateConnected:
+				d.doPoll(ctx)
+			}
+
+			// Schedule next action based on state.
+			var next time.Duration
+			switch d.getState() {
+			case api.InverterStateConnected:
+				next = d.pollInterval
+				backoff = backoffInitial // reset backoff on success
+			case api.InverterStateDisconnected:
+				next = backoff
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+			case api.InverterStateFailed:
+				// Serial mismatch — stop polling entirely.
+				<-ctx.Done()
+				return nil
+			default:
+				next = d.pollInterval
+			}
+
+			if d.getState() != api.InverterStateFailed {
+				timer.Reset(next)
+			}
 		}
 	}
 }
 
-// pollOnce performs a single poll cycle: reads all sensors and stores them.
-func (d *Daemon) pollOnce(ctx context.Context) {
+// doConnect attempts to connect to the inverter and verify its identity.
+// Updates state to Connected on success, or Disconnected on failure.
+func (d *Daemon) doConnect(ctx context.Context) {
+	d.setState(api.InverterStateConnecting, nil)
+	slog.Info("Connecting to inverter...")
+
+	if err := d.inverter.Connect(ctx); err != nil {
+		slog.Warn("Connection failed", "error", err)
+		d.setState(api.InverterStateDisconnected, err)
+		return
+	}
+
+	// Verify identity (this also stores it on first connect).
+	if err := d.verifyIdentity(ctx); err != nil {
+		slog.Warn("Identity verification failed, disconnecting", "error", err)
+		d.closeConnection()
+		d.setState(api.InverterStateDisconnected, err)
+		return
+	}
+
+	// Check for serial mismatch.
+	if err := d.VerificationError(); err != nil {
+		slog.Warn("Serial mismatch detected, polling disabled", "error", err)
+		d.setState(api.InverterStateFailed, err)
+		return
+	}
+
+	slog.Info("Connected to inverter")
+	d.setState(api.InverterStateConnected, nil)
+}
+
+// doPoll performs a single poll cycle. On error it disconnects and
+// transitions to Disconnected so the state machine retries from scratch.
+func (d *Daemon) doPoll(ctx context.Context) {
 	slog.Debug("Poll cycle starting")
 
 	sensors, err := d.inverter.GetSensors(ctx)
 	if err != nil {
-		slog.Warn("Poll cycle failed to read sensors", "error", err)
+		slog.Warn("Poll cycle failed, disconnecting", "error", err)
+		d.closeConnection()
+		d.setState(api.InverterStateDisconnected, err)
 		return
 	}
 
@@ -176,20 +229,16 @@ func (d *Daemon) pollOnce(ctx context.Context) {
 		if d.store == nil {
 			break
 		}
-
 		var val *float64
 		var valText *string
-
 		switch v := sv.Value.(type) {
 		case float64:
 			val = &v
 		case string:
 			valText = &v
 		default:
-			// Skip non-numeric, non-string types (time.Time, etc.)
 			continue
 		}
-
 		if err := d.store.InsertSample(ctx, name, sv.Unit, now, val, valText); err != nil {
 			slog.Warn("Failed to store sample", "sensor", name, "error", err)
 			continue
@@ -198,6 +247,31 @@ func (d *Daemon) pollOnce(ctx context.Context) {
 	}
 
 	slog.Debug("Poll cycle complete", "sensors_read", len(sensors), "stored", stored)
+}
+
+// closeConnection closes the inverter connection, ignoring errors.
+func (d *Daemon) closeConnection() {
+	if err := d.inverter.Close(); err != nil {
+		slog.Debug("Error closing inverter connection (expected if already closed)", "error", err)
+	}
+}
+
+// getState returns the current state (read-only lock).
+func (d *Daemon) getState() api.InverterConnState {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.connState
+}
+
+// setState updates the connection state and error atomically.
+func (d *Daemon) setState(state api.InverterConnState, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	slog.Debug("State transition", "from", d.connState, "to", state)
+	d.connState = state
+	if err != nil {
+		d.connErr = err
+	}
 }
 
 // verifyIdentity reads the inverter info and checks/stores its serial number
@@ -238,8 +312,6 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 			ARMVersion: info.ARMVersion,
 			RatedPower: info.RatedPower,
 		}
-
-		// Purge any bad samples left from previous runs.
 		if err := d.store.PurgeBadSamples(ctx, info.RatedPower); err != nil {
 			slog.Warn("Failed to purge bad samples", "error", err)
 		}
@@ -263,22 +335,10 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 		info.Firmware, info.DSPVersion, info.ARMVersion, info.RatedPower); err != nil {
 		slog.Warn("Failed to update inverter identity", "error", err)
 	}
-
-	// Purge bad samples on every startup.
 	if err := d.store.PurgeBadSamples(ctx, info.RatedPower); err != nil {
 		slog.Warn("Failed to purge bad samples", "error", err)
 	}
 	return nil
-}
-
-// setState updates the connection state and error atomically.
-func (d *Daemon) setState(state api.InverterConnState, err error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.connState = state
-	if err != nil {
-		d.connErr = err
-	}
 }
 
 // Close cleans up daemon resources. Called after Run() returns.

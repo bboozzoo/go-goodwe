@@ -48,16 +48,19 @@ import (
 type InverterConnState int
 
 const (
-	InverterStateDisabled   InverterConnState = iota // no inverter configured
-	InverterStateConnecting                          // connecting to inverter in progress
-	InverterStateConnected                           // connected and identity verified
-	InverterStateFailed                              // connection or identity error
+	InverterStateDisabled     InverterConnState = iota // no inverter configured
+	InverterStateDisconnected                          // not connected, will retry
+	InverterStateConnecting                            // connecting to inverter in progress
+	InverterStateConnected                             // connected and identity verified
+	InverterStateFailed                                // connection or identity error
 )
 
 func (s InverterConnState) String() string {
 	switch s {
 	case InverterStateDisabled:
 		return "disabled"
+	case InverterStateDisconnected:
+		return "disconnected"
 	case InverterStateConnecting:
 		return "connecting"
 	case InverterStateConnected:
@@ -148,6 +151,12 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 		switch ds.InverterState() {
 		case InverterStateDisabled:
 			invState = &inverterState{Connected: false}
+		case InverterStateDisconnected:
+			status = "degraded"
+			invState = &inverterState{
+				Connected: false,
+				Error:     "disconnected, will retry",
+			}
 		case InverterStateConnecting:
 			status = "degraded"
 			invState = &inverterState{
@@ -411,6 +420,9 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 		switch ds.InverterState() {
 		case InverterStateDisabled:
 			writeJSONError(w, http.StatusServiceUnavailable, "no inverter configured")
+			return
+		case InverterStateDisconnected:
+			writeJSONError(w, http.StatusServiceUnavailable, "disconnected, will retry")
 			return
 		case InverterStateConnecting:
 			writeJSONError(w, http.StatusServiceUnavailable, "connecting to inverter...")
