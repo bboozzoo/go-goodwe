@@ -43,8 +43,9 @@ import (
 )
 
 const (
-	dtlsReadTimeout  = 5 * time.Second
-	dtlsWriteTimeout = 5 * time.Second
+	dtlsReadTimeout       = 5 * time.Second
+	dtlsWriteTimeout      = 5 * time.Second
+	dtlsHandshakeTimeout  = 10 * time.Second
 )
 
 // dtlsTransport implements Transport over DTLS with Modbus RTU framing.
@@ -90,7 +91,9 @@ func (t *dtlsTransport) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to resolve UDP address: %w", err)
 	}
 
-	conn, err := dtls.Dial("udp", udpAddr, config)
+	dialCtx, dialCancel := context.WithTimeout(ctx, dtlsHandshakeTimeout)
+	defer dialCancel()
+	conn, err := dtls.DialWithContext(dialCtx, "udp", udpAddr, config)
 	if err != nil {
 		return fmt.Errorf("dtls dial failed: %w", err)
 	}
