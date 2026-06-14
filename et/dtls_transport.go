@@ -43,9 +43,9 @@ import (
 )
 
 const (
-	dtlsReadTimeout       = 5 * time.Second
-	dtlsWriteTimeout      = 5 * time.Second
-	dtlsHandshakeTimeout  = 10 * time.Second
+	dtlsReadTimeout      = 5 * time.Second
+	dtlsWriteTimeout     = 5 * time.Second
+	dtlsHandshakeTimeout = 10 * time.Second
 )
 
 // dtlsTransport implements Transport over DTLS with Modbus RTU framing.
@@ -118,38 +118,39 @@ func (t *dtlsTransport) Close() error {
 }
 
 // ReadRegisters performs a Modbus RTU bulk register read over the DTLS connection.
-// Automatically reconnects if the connection has been closed by the remote end.
+// The mutex is held across the entire write+read cycle to prevent concurrent
+// goroutines (poll loop + HTTP handler) from interleaving Modbus transactions
+// on the same socket.
 func (t *dtlsTransport) ReadRegisters(ctx context.Context, startReg uint16, quantity uint16) ([]byte, error) {
 	t.mu.Lock()
-	conn := t.conn
+
+	// Fast path: conn is alive, try the read immediately under lock.
+	if t.conn != nil {
+		data, err := t.doRead(t.conn, startReg, quantity)
+		if err == nil || !isConnClosed(err) {
+			t.mu.Unlock()
+			return data, err
+		}
+		// Connection is dead — clean up and fall through to reconnect.
+		slog.Debug("DTLS connection closed, reconnecting...", "error", err)
+		_ = t.conn.Close()
+		t.conn = nil
+	}
 	t.mu.Unlock()
 
-	if conn == nil {
-		return t.readWithReconnect(ctx, startReg, quantity)
-	}
-
-	data, err := t.doRead(conn, startReg, quantity)
-	if err != nil && isConnClosed(err) {
-		slog.Debug("DTLS connection closed, reconnecting...", "error", err)
-		return t.readWithReconnect(ctx, startReg, quantity)
-	}
-	return data, err
-}
-
-// readWithReconnect reconnects and performs the read.
-func (t *dtlsTransport) readWithReconnect(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
+	// Reconnect without holding the lock (network I/O can block).
 	if err := t.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("reconnect failed: %w", err)
 	}
 
+	// Retry the read under lock.
 	t.mu.Lock()
-	conn := t.conn
-	t.mu.Unlock()
-
-	return t.doRead(conn, startReg, quantity)
+	defer t.mu.Unlock()
+	return t.doRead(t.conn, startReg, quantity)
 }
 
 // doRead performs a single Modbus RTU read over the given connection.
+// The caller MUST hold mu.
 func (t *dtlsTransport) doRead(conn net.Conn, startReg, quantity uint16) ([]byte, error) {
 	// Modbus RTU over DTLS:
 	// Slave ID (1) | Function Code (1) | Register Address (2) | Quantity (2) | CRC (2)
