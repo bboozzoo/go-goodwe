@@ -109,9 +109,90 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 | `GET` | `/api/health` | Service health status |
 | `GET` | `/api/info` | Inverter information |
 | `GET` | `/api/sensors` | List of available sensors |
-| `GET` | `/api/data/{sensor}` | Sensor sample data (planned) |
-| `GET` | `/api/data/{sensor}/aggregate` | Aggregated sensor data (planned) |
+| `GET` | `/api/data/{sensor}` | Live sensor reading |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical sensor data from DB |
 | `GET` | `/dashboard` | Embedded dashboard (WIP) |
+
+### REST API
+
+All endpoints return JSON. The examples below assume the daemon is listening on
+`localhost:8080`.
+
+**`GET /api/health`** — Service health and inverter connection state:
+
+```sh
+$ curl -s http://localhost:8080/api/health
+{
+  "status": "ok",
+  "timestamp": "2026-06-14T12:00:00Z",
+  "inverter": {
+    "connected": true
+  }
+}
+```
+
+**`GET /api/info`** — Inverter identity and last poll time:
+
+```sh
+$ curl -s http://localhost:8080/api/info
+{
+  "serial": "90000000000001",
+  "model": "GW15K-ET",
+  "firmware": "04062-07-S0002071-13-439",
+  "rated_power": 15000,
+  "dsp_version": "07",
+  "arm_version": "13",
+  "inverter_ip": "192.168.4.82",
+  "daemon_version": "v0.1.0",
+  "last_poll_time": "2026-06-14T11:59:30Z"
+}
+```
+
+**`GET /api/sensors`** — List all available sensor names and categories:
+
+```sh
+$ curl -s http://localhost:8080/api/sensors
+[
+  {"name": "ppv", "category": "Main Telemetry"},
+  {"name": "battery_soc", "category": "Battery"},
+  {"name": "house_consumption", "category": "Meter"},
+  ...
+]
+```
+
+**`GET /api/data/{sensor}`** — Live Modbus read of a single sensor:
+
+```sh
+$ curl -s http://localhost:8080/api/data/battery_soc
+{
+  "name": "battery_soc",
+  "value": 87,
+  "unit": "%",
+  "timestamp": "2026-06-14T12:00:01Z"
+}
+```
+
+**`GET /api/data/{sensor}/aggregate`** — Historical samples from the database.
+Supports `?since=` and `?until=` (RFC 3339), `?limit=` (default 1000), and
+`?latest=true` to retrieve only the most recent sample:
+
+```sh
+# Last 24 hours (default)
+$ curl -s http://localhost:8080/api/data/ppv/aggregate
+{
+  "sensor": "ppv",
+  "samples": [
+    {"timestamp": "2026-06-14T06:00:00Z", "value": 1200, "value_text": ""},
+    ...
+  ]
+}
+
+# Custom time range
+$ curl -s "http://localhost:8080/api/data/ppv/aggregate?since=2026-06-14T00:00:00Z&until=2026-06-14T12:00:00Z&limit=500"
+
+# Most recent sample only
+$ curl -s "http://localhost:8080/api/data/ppv/aggregate?latest=true"
+```
 
 ### Troubleshooting
 
