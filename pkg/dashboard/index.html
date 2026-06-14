@@ -6,63 +6,108 @@
 <title>GoodWe Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
+:root, [data-theme="light"] {
+  --bg-body: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  --bg-hover: #e2e8f0;
+  --bg-selected: #dbeafe;
+  --bg-error: #fef2f2;
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --text-accent: #3b82f6;
+  --border: #e2e8f0;
+  --color-on-grid: #16a34a;
+  --color-off-grid: #ca8a04;
+  --color-fault: #dc2626;
+  --color-error-text: #dc2626;
+  --color-live-on: #16a34a;
+  --color-live-off: #94a3b8;
+}
+[data-theme="dark"] {
+  --bg-body: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-card: #0f172a;
+  --bg-input: #0f172a;
+  --bg-hover: #334155;
+  --bg-selected: #1e3a5f;
+  --bg-error: #450a0a;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-accent: #38bdf8;
+  --border: #334155;
+  --color-on-grid: #4ade80;
+  --color-off-grid: #fbbf24;
+  --color-fault: #f87171;
+  --color-error-text: #f87171;
+  --color-live-on: #4ade80;
+  --color-live-off: #64748b;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-       background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-.header { background: #1e293b; padding: 1rem 1.5rem; border-bottom: 1px solid #334155; }
-.header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
-.header .status { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.875rem; color: #94a3b8; }
-.header .status .val { color: #e2e8f0; font-weight: 500; }
-.header .error { color: #f87171; margin-top: 0.5rem; padding: 0.5rem; background: #450a0a; border-radius: 4px; }
+       background: var(--bg-body); color: var(--text-primary); min-height: 100vh;
+       transition: background 0.2s, color 0.2s; }
+.header { background: var(--bg-surface); padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }
+.header h1 { font-size: 1.25rem; font-weight: 600; color: var(--text-accent); }
+.header .status { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted); }
+.header .status .val { color: var(--text-primary); font-weight: 500; }
+.header .error { color: var(--color-error-text); margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-error); border-radius: 4px; }
 .system-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 1rem; padding: 1rem 1.5rem; background: #1e293b; border-bottom: 1px solid #334155; }
-.system-grid .card { background: #0f172a; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid #334155; }
-.system-grid .card .label { font-size: 0.75rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+                gap: 1rem; padding: 1rem 1.5rem; background: var(--bg-surface); border-bottom: 1px solid var(--border); }
+.system-grid .card { background: var(--bg-card); padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid var(--border); }
+.system-grid .card .label { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; }
 .system-grid .card .value { font-size: 1.25rem; font-weight: 600; margin-top: 0.25rem; }
-.system-grid .card .value.on-grid { color: #4ade80; }
-.system-grid .card .value.off-grid { color: #fbbf24; }
-.system-grid .card .value.fault { color: #f87171; }
+.system-grid .card .value.on-grid { color: var(--color-on-grid); }
+.system-grid .card .value.off-grid { color: var(--color-off-grid); }
+.system-grid .card .value.fault { color: var(--color-fault); }
 .layout { display: flex; gap: 0; height: calc(100vh - 200px); }
-.sensor-list { width: 280px; min-width: 280px; overflow-y: auto; background: #1e293b;
-               border-right: 1px solid #334155; padding: 0.5rem; }
-.sensor-list input { width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid #334155;
-                     border-radius: 4px; background: #0f172a; color: #e2e8f0; font-size: 0.8rem; }
-.sensor-list input::placeholder { color: #64748b; }
-.sensor-list .category { font-size: 0.7rem; text-transform: uppercase; color: #64748b;
+.sensor-list { width: 280px; min-width: 280px; overflow-y: auto; background: var(--bg-surface);
+               border-right: 1px solid var(--border); padding: 0.5rem; }
+.sensor-list input { width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border: 1px solid var(--border);
+                     border-radius: 4px; background: var(--bg-input); color: var(--text-primary); font-size: 0.8rem; }
+.sensor-list input::placeholder { color: var(--text-muted); }
+.sensor-list .category { font-size: 0.7rem; text-transform: uppercase; color: var(--text-muted);
                           letter-spacing: 0.05em; padding: 0.5rem 0.5rem 0.25rem; margin-top: 0.5rem; }
 .sensor-list .category:first-child { margin-top: 0; }
 .sensor-list .sensor { padding: 0.3rem 0.5rem; cursor: pointer; border-radius: 4px; font-size: 0.8rem;
-                        color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sensor-list .sensor:hover { background: #334155; color: #e2e8f0; }
-.sensor-list .sensor.selected { background: #1e3a5f; color: #38bdf8; }
+                        color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sensor-list .sensor:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sensor-list .sensor.selected { background: var(--bg-selected); color: var(--text-accent); }
 .graph-area { flex: 1; overflow-y: auto; padding: 1rem; }
 .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
-.controls button { padding: 0.4rem 0.75rem; border: 1px solid #334155; background: #1e293b;
-                    color: #94a3b8; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
-.controls button.active { background: #1e3a5f; color: #38bdf8; border-color: #38bdf8; }
-.controls button:hover { background: #334155; color: #e2e8f0; }
-.controls label { font-size: 0.8rem; color: #64748b; }
+.controls button { padding: 0.4rem 0.75rem; border: 1px solid var(--border); background: var(--bg-surface);
+                    color: var(--text-secondary); border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.controls button.active { background: var(--bg-selected); color: var(--text-accent); }
+.controls button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.controls label { font-size: 0.8rem; color: var(--text-muted); }
 .controls .live-toggle { margin-left: auto; }
 .controls .live-toggle .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                                      margin-right: 0.4rem; }
-.controls .live-toggle .indicator.on { background: #4ade80; }
-.controls .live-toggle .indicator.off { background: #64748b; }
-.graph-card { background: #1e293b; border: 1px solid #334155; border-radius: 6px;
+.controls .live-toggle .indicator.on { background: var(--color-live-on); }
+.controls .live-toggle .indicator.off { background: var(--color-live-off); }
+.graph-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
                padding: 1rem; margin-bottom: 1rem; }
 .graph-card .graph-header { display: flex; justify-content: space-between; align-items: center;
                              margin-bottom: 0.5rem; }
 .graph-card .graph-header .sensor-name { font-size: 0.8rem; font-weight: 500; }
-.graph-card .graph-header .sensor-unit { font-size: 0.7rem; color: #64748b; margin-left: 0.5rem; }
-.graph-card .graph-header .close-btn { background: none; border: none; color: #64748b;
+.graph-card .graph-header .sensor-unit { font-size: 0.7rem; color: var(--text-muted); margin-left: 0.5rem; }
+.graph-card .graph-header .close-btn { background: none; border: none; color: var(--text-muted);
                                         cursor: pointer; font-size: 1rem; padding: 0.2rem 0.4rem; }
-.graph-card .graph-header .close-btn:hover { color: #f87171; }
+.graph-card .graph-header .close-btn:hover { color: var(--color-fault); }
 .graph-card canvas { width: 100% !important; max-height: 250px; }
 .empty-state { display: flex; align-items: center; justify-content: center; height: 100%;
-                color: #64748b; font-size: 0.9rem; }
+                color: var(--text-muted); font-size: 0.9rem; }
+.no-data-msg { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem; }
+.theme-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer;
+              font-size: 0.85rem; padding: 0.25rem 0.5rem; border-radius: 4px; margin-left: auto; }
+.theme-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 @media (max-width: 768px) {
   .layout { flex-direction: column; height: auto; }
   .sensor-list { width: 100%; min-width: unset; max-height: 200px; border-right: none;
-                  border-bottom: 1px solid #334155; }
+                  border-bottom: 1px solid var(--border); }
   .header .status { gap: 1rem; }
   .system-grid { grid-template-columns: repeat(2, 1fr); }
 }
@@ -78,6 +123,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <span>Rated: <span class="val" id="info-rated">-</span></span>
     <span>Last poll: <span class="val" id="info-lastpoll">-</span></span>
     <span>Connected: <span class="val" id="info-connected">-</span></span>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">Light / Dark</button>
   </div>
   <div id="error-box" class="error" style="display:none"></div>
 </div>
@@ -139,6 +185,9 @@ function timeRangeToParams(range) {
   return { since: since.toISOString(), until: now.toISOString() };
 }
 
+function getCSSVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
 function sensorUnit(name) {
   // Derive unit from sensor name conventions
   const lower = name.toLowerCase();
@@ -449,7 +498,7 @@ async function refreshGraph(graph) {
         x: {
           type: 'linear',
           ticks: {
-            color: '#64748b',
+            color: getCSSVar('--text-muted'),
             maxTicksLimit: 10,
             callback: function(val) {
               const d = new Date(val);
@@ -460,17 +509,17 @@ async function refreshGraph(graph) {
               return ('0' + d.getMonth()+1).slice(-2) + '/' + ('0' + d.getDate()).slice(-2);
             },
           },
-          grid: { color: '#1e293b' },
+          grid: { color: getCSSVar('--border') },
         },
         y: {
           beginAtZero: true,
-          ticks: { color: '#64748b' },
-          grid: { color: '#1e293b' },
-          title: { display: !!graph.unit, text: graph.unit || '', color: '#94a3b8' },
+          ticks: { color: getCSSVar('--text-muted') },
+          grid: { color: getCSSVar('--border') },
+          title: { display: !!graph.unit, text: graph.unit || '', color: getCSSVar('--text-secondary') },
         },
       },
       plugins: {
-        legend: { labels: { color: '#94a3b8', boxWidth: 12, padding: 8 } },
+        legend: { labels: { color: getCSSVar('--text-secondary'), boxWidth: 12, padding: 8 } },
         tooltip: {
           callbacks: {
             title: function(items) {
@@ -538,6 +587,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Periodic status refresh (every 30s)
   setInterval(() => { loadInfo(); loadStatus(); }, 30000);
 });
+// ---- Theme toggle ----
+function getTheme() {
+  return localStorage.getItem('theme') || 'light';
+}
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+}
+function toggleTheme() {
+  setTheme(getTheme() === 'light' ? 'dark' : 'light');
+}
+// Apply saved theme on load.
+setTheme(getTheme());
 </script>
 </body>
 </html>
