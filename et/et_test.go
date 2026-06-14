@@ -28,6 +28,7 @@
 package et
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -1024,4 +1025,110 @@ func TestParseModbusTCPResponseException(t *testing.T) {
 	_, err = parseModbusTCPResponse(data)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exception 0x02")
+}
+
+// mockTransport is a simple Transport implementation used in unit tests.
+// Each call to ReadRegisters consumes the next entry from the responses slice.
+type mockTransport struct {
+	responses []mockResponse
+	calls     []mockCall
+}
+
+type mockResponse struct {
+	data []byte
+	err  error
+}
+
+type mockCall struct {
+	startReg uint16
+	quantity uint16
+}
+
+func (m *mockTransport) Connect(_ context.Context) error { return nil }
+func (m *mockTransport) Close() error                    { return nil }
+
+func (m *mockTransport) ReadRegisters(_ context.Context, startReg, quantity uint16) ([]byte, error) {
+	m.calls = append(m.calls, mockCall{startReg: startReg, quantity: quantity})
+	if len(m.responses) == 0 {
+		return nil, fmt.Errorf("mockTransport: no more responses")
+	}
+	r := m.responses[0]
+	m.responses = m.responses[1:]
+	return r.data, r.err
+}
+
+var errIllegalDataAddress = fmt.Errorf("modbus exception 0x02: ILLEGAL DATA ADDRESS")
+
+// makeMeterData returns a zero-filled byte slice representing n registers of
+// meter data, which satisfies the Calculator bounds check.
+func makeMeterData(n int) []byte {
+	return make([]byte, n*2)
+}
+
+// TestReadSensor_MeterFallbackChain verifies the 125→58→45 fallback path in
+// ReadSensor for meter-block sensors.
+func TestReadSensor_MeterFallbackChain(t *testing.T) {
+	// Pick any sensor that lives in the meter block (readQty == 125).
+	const sensorName = "commode"
+
+	t.Run("fallback125to58to45", func(t *testing.T) {
+		// First call (qty=125) → ILLEGAL_DATA_ADDRESS
+		// Second call (qty=58) → ILLEGAL_DATA_ADDRESS
+		// Third call (qty=45) → success
+		mt := &mockTransport{
+			responses: []mockResponse{
+				{nil, errIllegalDataAddress}, // qty=125
+				{nil, errIllegalDataAddress}, // qty=58
+				{makeMeterData(45), nil},     // qty=45
+			},
+		}
+		inv := NewWithTransport("SN001", mt)
+		sv, err := inv.ReadSensor(context.Background(), sensorName)
+		require.NoError(t, err)
+		_ = sv
+
+		require.Len(t, mt.calls, 3)
+		assert.EqualValues(t, 125, mt.calls[0].quantity, "first attempt: qty=125")
+		assert.EqualValues(t, 58, mt.calls[1].quantity, "second attempt: qty=58")
+		assert.EqualValues(t, 45, mt.calls[2].quantity, "third attempt: qty=45")
+		for _, c := range mt.calls {
+			assert.EqualValues(t, 36000, c.startReg, "start register must be 36000")
+		}
+	})
+
+	t.Run("fallback125to58success", func(t *testing.T) {
+		// First call (qty=125) → ILLEGAL_DATA_ADDRESS
+		// Second call (qty=58) → success
+		mt := &mockTransport{
+			responses: []mockResponse{
+				{nil, errIllegalDataAddress}, // qty=125
+				{makeMeterData(58), nil},     // qty=58
+			},
+		}
+		inv := NewWithTransport("SN001", mt)
+		sv, err := inv.ReadSensor(context.Background(), sensorName)
+		require.NoError(t, err)
+		_ = sv
+
+		require.Len(t, mt.calls, 2)
+		assert.EqualValues(t, 125, mt.calls[0].quantity)
+		assert.EqualValues(t, 58, mt.calls[1].quantity)
+	})
+
+	t.Run("allFallbacksFail", func(t *testing.T) {
+		// All three sizes fail with ILLEGAL_DATA_ADDRESS → ReadSensor returns error.
+		mt := &mockTransport{
+			responses: []mockResponse{
+				{nil, errIllegalDataAddress}, // qty=125
+				{nil, errIllegalDataAddress}, // qty=58
+				{nil, errIllegalDataAddress}, // qty=45
+			},
+		}
+		inv := NewWithTransport("SN001", mt)
+		_, err := inv.ReadSensor(context.Background(), sensorName)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read sensor")
+
+		require.Len(t, mt.calls, 3)
+	})
 }
