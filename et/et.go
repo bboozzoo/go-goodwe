@@ -158,12 +158,7 @@ func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
 }
 
 func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
-	// TODO 35100, 37000 need to be named constants
-	// TODO: 125 here, and 24 around batter need to ba made named constants, e.g.:
-	// BaseRegistersOffset = 35100
-	// BaseRegistersCount = 125
-	// BatteryRegistersOffset = 37000
-	data, err := e.readOnceWithFallback(ctx, 35100, 125)
+	data, err := e.readOnceWithFallback(ctx, baseRegistersOffset, baseRegistersCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bulk telemetry: %w", err)
 	}
@@ -184,8 +179,8 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
-	// Attempt to read battery info (37000, 24 regs). Skip silently if battery is absent.
-	batteryData, err := e.transport.ReadRegisters(ctx, 37000, 24)
+	// Attempt to read battery info. Skip silently if battery is absent.
+	batteryData, err := e.transport.ReadRegisters(ctx, batteryRegistersOffset, batteryRegistersCount)
 	if err != nil {
 		// ILLEGAL_DATA_ADDRESS (0x02) means no battery connected
 		if !isIllegalDataAddress(err) {
@@ -207,13 +202,13 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
-	// Attempt to read meter data (36000). Try 125 regs, fall back to 58, then 45.
-	meterData, err := e.transport.ReadRegisters(ctx, 36000, 125)
+	// Attempt to read meter data. Try meterRegistersCount regs, fall back to smaller counts.
+	meterData, err := e.transport.ReadRegisters(ctx, meterRegistersOffset, meterRegistersCount)
 	if err != nil && isIllegalDataAddress(err) {
-		meterData, err = e.transport.ReadRegisters(ctx, 36000, 58)
+		meterData, err = e.transport.ReadRegisters(ctx, meterRegistersOffset, meterRegistersCountFallb1)
 	}
 	if err != nil && isIllegalDataAddress(err) {
-		meterData, err = e.transport.ReadRegisters(ctx, 36000, 45)
+		meterData, err = e.transport.ReadRegisters(ctx, meterRegistersOffset, meterRegistersCountFallb2)
 	}
 	if err != nil {
 		slog.Warn("Failed to read meter data", "error", err)
@@ -233,8 +228,8 @@ func (e *ETInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorVa
 		}
 	}
 
-	// Read MPPT data (35301, 61 regs). Skip silently if unavailable.
-	mpptData, err := e.transport.ReadRegisters(ctx, 35301, 61)
+	// Read MPPT data. Skip silently if unavailable.
+	mpptData, err := e.transport.ReadRegisters(ctx, mpptRegistersOffset, mpptRegistersCount)
 	if err != nil {
 		if !isIllegalDataAddress(err) {
 			slog.Warn("Failed to read MPPT data", "error", err)
@@ -271,17 +266,17 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 		if sb.block == blockMeter && isIllegalDataAddress(err) {
 			var fallbackQty uint16
 			switch {
-			case sb.readQty >= 125:
-				fallbackQty = 58
-			case sb.readQty >= 58:
-				fallbackQty = 45
+			case sb.readQty >= meterRegistersCount:
+				fallbackQty = meterRegistersCountFallb1
+			case sb.readQty >= meterRegistersCountFallb1:
+				fallbackQty = meterRegistersCountFallb2
 			}
 			if fallbackQty > 0 {
 				// No reconnect here — the connection is fine, inverter just doesn't
 				// support this many registers.
 				data, err = e.transport.ReadRegisters(ctx, sb.startReg, fallbackQty)
-				if err != nil && isIllegalDataAddress(err) && fallbackQty == 58 {
-					data, err = e.transport.ReadRegisters(ctx, sb.startReg, 45)
+				if err != nil && isIllegalDataAddress(err) && fallbackQty == meterRegistersCountFallb1 {
+					data, err = e.transport.ReadRegisters(ctx, sb.startReg, meterRegistersCountFallb2)
 				}
 			}
 		}
