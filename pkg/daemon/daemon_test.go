@@ -140,6 +140,8 @@ func TestDaemon_ConnectSuccess(t *testing.T) {
 	// Wait for the state machine to connect.
 	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, api.InverterStateConnected, d.InverterState())
+	// After a successful connect, the connection error should be cleared.
+	assert.Nil(t, d.ConnError())
 
 	// First connect should have happened.
 	assert.GreaterOrEqual(t, inv.ConnectCount(), 1)
@@ -147,6 +149,26 @@ func TestDaemon_ConnectSuccess(t *testing.T) {
 	// Wait for a poll cycle.
 	time.Sleep(100 * time.Millisecond)
 	cancel()
+}
+
+func TestDaemon_ConnErrorNotSticky(t *testing.T) {
+	d := New(nil, nil, 0)
+
+	// Simulate a transient failure.
+	d.setState(api.InverterStateDisconnected, fmt.Errorf("transient error"))
+	assert.ErrorContains(t, d.ConnError(), "transient error")
+
+	// Transition to Connected with nil error — connErr must be cleared.
+	d.setState(api.InverterStateConnected, nil)
+	assert.Nil(t, d.ConnError())
+
+	// Transition to Disconnected with another error — connErr set again.
+	d.setState(api.InverterStateDisconnected, fmt.Errorf("another error"))
+	assert.ErrorContains(t, d.ConnError(), "another error")
+
+	// Transition to Failed with nil error — connErr cleared.
+	d.setState(api.InverterStateFailed, nil)
+	assert.Nil(t, d.ConnError())
 }
 
 func TestDaemon_ConnectFailsThenRetries(t *testing.T) {
