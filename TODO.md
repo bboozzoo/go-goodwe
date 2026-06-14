@@ -185,7 +185,6 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/api/handler.go` — CORS + request logging middleware | Done |
 | `pkg/api/handler.go` — `DaemonStatus` interface | Done |
 | `pkg/api/handler.go` — `SensorStore` interface | Done |
-| `pkg/api/handler.go` — `/api/status` (live all-sensors) | Pending |
 | `pkg/api/handler.go` — Purge endpoints (DELETE/POST) | Pending |
 | `cmd/goodwe-daemon/main.go` — Flag parsing, DB, discovery, HTTP + poll | Done |
 | `cmd/goodwe-daemon/main.go` — Graceful shutdown (15s timeout) | Done |
@@ -296,7 +295,6 @@ GET  /api/data/{sensor}/aggregate       → raw samples from DB (?since=&until=&
 
 Pending:
 ```
-GET  /api/status                        → current live readings from inverter (all sensors)
 DELETE /api/data/{sensor}               → purge samples older than ?before=<date>
 POST  /api/data/{sensor}/purge          → alternative: JSON body
 ```
@@ -309,7 +307,6 @@ The dashboard is split into two views:
 - Numeric values shown with unit badges (e.g., `352 V`, `3.2 kW`)
 - Label values shown as human-readable text (e.g., `Normal (On-Grid)`, `Discharge`)
 - Error/bitmap sensors shown as lists of active flags
-- Auto-refreshes every 5s via `/api/status`
 
 **Chart View** (sensor selector)
 - Dropdown populated from `/api/sensors`, **filtered to numeric sensors only**
@@ -346,7 +343,6 @@ Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed belo
    - Gap backfill on startup (`LastSampleTime`) — ❌ not wired
    - Hourly/daily aggregation triggers — ❌ pending
 4. **Create `pkg/api/handler.go`** — ✅ routes done, missing:
-   - `/api/status` endpoint — ❌ pending
    - Purge endpoints — ❌ pending
 5. **Create `pkg/dashboard/`** — ✅ done with full single-page app
 6. **Create `cmd/goodwe-daemon/main.go`** — ✅ done
