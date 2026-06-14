@@ -970,3 +970,58 @@ func TestDeviceInfoVersionFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestIsConnClosed(t *testing.T) {
+	tests := []struct {
+		err    error
+		expect bool
+	}{
+		{nil, false},
+		{fmt.Errorf("dtls fatal: conn is closed"), true},
+		{fmt.Errorf("write: connection refused"), true},
+		{fmt.Errorf("broken pipe"), true},
+		{fmt.Errorf("read: connection reset by peer"), true},
+		{fmt.Errorf("i/o timeout"), false},
+		{fmt.Errorf("handshake error: read udp ...: read: connection refused"), true},
+		{fmt.Errorf("not a connection error"), false},
+	}
+
+	for _, tc := range tests {
+		got := isConnClosed(tc.err)
+		assert.Equal(t, tc.expect, got, "isConnClosed(%v)", tc.err)
+	}
+}
+
+func TestParseModbusTCPResponse(t *testing.T) {
+	// Sample Modbus TCP response for reading 33 holding registers (0x35000, qty=33).
+	// MBAP(7): 0x0002 0x0000 0x0045 0xF7
+	// Followed by: Func(1) 0x03, ByteCount(1) 0x42, Data(66 bytes)
+	hexResp := "000200000045f7034200003a980001353031354b4554543234364c3035393200000000000000000000000000001b9c000001b730343036322d30372d53303030323037312d31332d343339"
+	data, err := hex.DecodeString(hexResp)
+	require.NoError(t, err)
+
+	result, err := parseModbusTCPResponse(data)
+	require.NoError(t, err)
+	require.Len(t, result, 66)
+
+	// Check a few known bytes: rated_power low byte should be 0x3a98 = 15000
+	assert.Equal(t, uint16(0x3a98), binary.BigEndian.Uint16(result[2:4]))
+	// Check serial prefix
+	assert.Equal(t, "5015KETT246L0592", strings.TrimRight(string(result[6:22]), "\x00"))
+}
+
+func TestParseModbusTCPResponseShort(t *testing.T) {
+	_, err := parseModbusTCPResponse([]byte{0x00, 0x02})
+	assert.ErrorContains(t, err, "too short")
+}
+
+func TestParseModbusTCPResponseException(t *testing.T) {
+	// Modbus exception: MBAP(7) + Func(0x83) + ExceptionCode(0x02)
+	hexResp := "000100000003f78302"
+	data, err := hex.DecodeString(hexResp)
+	require.NoError(t, err)
+
+	_, err = parseModbusTCPResponse(data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exception 0x02")
+}

@@ -101,38 +101,39 @@ func (t *tcpTransport) Close() error {
 }
 
 // ReadRegisters performs a Modbus TCP read holding registers request.
-// Automatically reconnects if the connection has been closed by the remote end.
+// The mutex is held across the entire write+read cycle to prevent concurrent
+// goroutines (poll loop + HTTP handler) from interleaving Modbus transactions
+// on the same socket.
 func (t *tcpTransport) ReadRegisters(ctx context.Context, startReg uint16, quantity uint16) ([]byte, error) {
 	t.mu.Lock()
-	conn := t.conn
+
+	// Fast path: conn is alive, try the read immediately under lock.
+	if t.conn != nil {
+		data, err := t.doRead(t.conn, startReg, quantity)
+		if err == nil || !isConnClosed(err) {
+			t.mu.Unlock()
+			return data, err
+		}
+		// Connection is dead — clean up and fall through to reconnect.
+		slog.Debug("TCP connection closed, reconnecting...", "error", err)
+		_ = t.conn.Close()
+		t.conn = nil
+	}
 	t.mu.Unlock()
 
-	if conn == nil {
-		return t.readWithReconnect(ctx, startReg, quantity)
-	}
-
-	data, err := t.doRead(conn, startReg, quantity)
-	if err != nil && isConnClosed(err) {
-		slog.Debug("TCP connection closed, reconnecting...", "error", err)
-		return t.readWithReconnect(ctx, startReg, quantity)
-	}
-	return data, err
-}
-
-// readWithReconnect establishes a fresh connection and performs the read.
-func (t *tcpTransport) readWithReconnect(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
+	// Reconnect without holding the lock (network I/O can block).
 	if err := t.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("reconnect failed: %w", err)
 	}
 
+	// Retry the read under lock.
 	t.mu.Lock()
-	conn := t.conn
-	t.mu.Unlock()
-
-	return t.doRead(conn, startReg, quantity)
+	defer t.mu.Unlock()
+	return t.doRead(t.conn, startReg, quantity)
 }
 
 // doRead performs a single Modbus TCP read over the given connection.
+// The caller MUST hold mu.
 func (t *tcpTransport) doRead(conn net.Conn, startReg, quantity uint16) ([]byte, error) {
 	req := t.buildRequest(startReg, quantity)
 	slog.Debug("Sending Modbus TCP request", "start", startReg, "qty", quantity, "payload", hex.EncodeToString(req))

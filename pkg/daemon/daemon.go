@@ -269,6 +269,7 @@ func (d *Daemon) setState(state api.InverterConnState, err error) {
 	defer d.mu.Unlock()
 	slog.Debug("State transition", "from", d.connState, "to", state)
 	d.connState = state
+	d.connErr = nil
 	if err != nil {
 		d.connErr = err
 	}
