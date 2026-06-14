@@ -104,6 +104,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .theme-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer;
               font-size: 0.85rem; padding: 0.25rem 0.5rem; border-radius: 4px; margin-left: auto; }
 .theme-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.badge { font-family: "SF Mono", SFMono-Regular, "Cascadia Code", ui-monospace, monospace;
+         font-size: 0.8rem; background: var(--bg-hover); padding: 0.1rem 0.35rem;
+         border-radius: 3px; color: var(--text-primary); }
 @media (max-width: 768px) {
   .layout { flex-direction: column; height: auto; }
   .sensor-list { width: 100%; min-width: unset; max-height: 200px; border-right: none;
@@ -123,6 +126,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <span>Rated: <span class="val" id="info-rated">-</span></span>
     <span>Last poll: <span class="val" id="info-lastpoll">-</span></span>
     <span>Connected: <span class="val" id="info-connected">-</span></span>
+    <span>Daemon: <span class="val badge" id="info-daemon">-</span></span>
     <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">Light / Dark</button>
   </div>
   <div id="error-box" class="error" style="display:none"></div>
@@ -222,6 +226,7 @@ async function loadInfo() {
     document.getElementById('info-ip').textContent = info.inverter_ip || '-';
     document.getElementById('info-rated').textContent = info.rated_power ? info.rated_power + ' W' : '-';
     document.getElementById('info-lastpoll').textContent = info.last_poll_time || '-';
+    document.getElementById('info-daemon').textContent = info.daemon_version || '-';
     if (info.error) {
       document.getElementById('error-box').textContent = info.error;
       document.getElementById('error-box').style.display = 'block';

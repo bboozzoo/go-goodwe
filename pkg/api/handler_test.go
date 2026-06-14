@@ -110,7 +110,7 @@ func (m *mockSensorStore) LastSampleTime(ctx context.Context) (*time.Time, error
 // ---- helpers ----
 
 func newHandler(inv goodwe.Inverter, ds DaemonStatus, ss SensorStore) *Handler {
-	return New(inv, ds, ss, "10.0.0.1", false)
+	return New(inv, ds, ss, "10.0.0.1", "test-version", false)
 }
 
 func getBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
@@ -143,6 +143,7 @@ func TestHealth_Connected(t *testing.T) {
 	assert.Equal(t, "ok", body["status"])
 	inv := body["inverter"].(map[string]any)
 	assert.Equal(t, true, inv["connected"])
+	assert.Equal(t, "test-version", rr.Header().Get("Goodwe-Daemon-Version"))
 }
 
 func TestHealth_Connecting(t *testing.T) {
@@ -208,7 +209,7 @@ func TestHealth_VerificationError(t *testing.T) {
 }
 
 func TestHealth_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", false)
+	h := New(nil, nil, nil, "", "", false)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/health", nil)
 	h.ServeHTTP(rr, req)
@@ -219,6 +220,8 @@ func TestHealth_NoInverter(t *testing.T) {
 	// inverter field should be absent when there's no daemon status and no inverter
 	_, ok := body["inverter"]
 	assert.False(t, ok)
+	// Version header should be set even without inverter.
+	assert.Equal(t, "", rr.Header().Get("Goodwe-Daemon-Version"))
 }
 
 // ---- info endpoint ----
@@ -248,11 +251,13 @@ func TestInfo_FromDB(t *testing.T) {
 	assert.Equal(t, "arm1", body["arm_version"])
 	assert.Equal(t, float64(10000), body["rated_power"])
 	assert.Equal(t, "10.0.0.1", body["inverter_ip"])
+	assert.Equal(t, "test-version", body["daemon_version"])
 	assert.Contains(t, body["last_poll_time"], now.Format("2006-01-02"))
+	assert.Equal(t, "test-version", rr.Header().Get("Goodwe-Daemon-Version"))
 }
 
 func TestInfo_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", false)
+	h := New(nil, nil, nil, "", "", false)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/info", nil)
 	h.ServeHTTP(rr, req)
@@ -273,6 +278,7 @@ func TestInfo_FallbackToInverter(t *testing.T) {
 	body := getBody(t, rr)
 	assert.Equal(t, "TEST001", body["serial"])
 	assert.Equal(t, "GW-TEST", body["model"])
+	assert.Equal(t, "test-version", body["daemon_version"])
 }
 
 // ---- sensors endpoint ----
@@ -349,7 +355,7 @@ func TestGetData_UnknownSensor(t *testing.T) {
 }
 
 func TestGetData_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", false)
+	h := New(nil, nil, nil, "", "", false)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/data/battery_soc", nil)
 	h.ServeHTTP(rr, req)

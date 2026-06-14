@@ -90,18 +90,19 @@ type SensorStore interface {
 
 // Handler serves the REST API endpoints.
 type Handler struct {
-	inverter   goodwe.Inverter // may be nil when no inverter is configured
-	daemon     DaemonStatus    // may be nil
-	store      SensorStore     // may be nil; aggregate endpoint returns 501
-	inverterIP string          // IP address of the inverter, for display
-	debug      bool
-	mux        http.Handler
+	inverter       goodwe.Inverter // may be nil when no inverter is configured
+	daemon         DaemonStatus    // may be nil
+	store          SensorStore     // may be nil; aggregate endpoint returns 501
+	inverterIP     string          // IP address of the inverter, for display
+	daemonVersion  string          // daemon build version (set at construction)
+	debug          bool
+	mux            http.Handler
 }
 
 // New creates an API handler. inverter, daemonStatus, and sensorStore may
 // be nil; endpoints return appropriate error codes when dependencies are missing.
-func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, debug bool) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, inverterIP: inverterIP, debug: debug}
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, daemonVersion string, debug bool) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, inverterIP: inverterIP, daemonVersion: daemonVersion, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -124,6 +125,7 @@ func (h *Handler) buildRoutes() http.Handler {
 
 	// Wrap in middleware chain: innermost first.
 	var handler http.Handler = mux
+	handler = h.versionHeaderMiddleware(handler)
 	handler = gzipMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = loggingMiddleware(h.debug, handler)
@@ -368,15 +370,16 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 
 // inverterInfo is the JSON body for GET /api/info.
 type inverterInfo struct {
-	Serial   string  `json:"serial"`
-	Model    string  `json:"model"`
-	Firmware string  `json:"firmware"`
-	Rated    int     `json:"rated_power"`
-	DSP      string  `json:"dsp_version"`
-	ARM      string  `json:"arm_version"`
-	IP       string  `json:"inverter_ip"`
-	LastPoll *string `json:"last_poll_time,omitempty"`
-	Error    string  `json:"error,omitempty"`
+	Serial        string  `json:"serial"`
+	Model         string  `json:"model"`
+	Firmware      string  `json:"firmware"`
+	Rated         int     `json:"rated_power"`
+	DSP           string  `json:"dsp_version"`
+	ARM           string  `json:"arm_version"`
+	IP            string  `json:"inverter_ip"`
+	DaemonVersion string  `json:"daemon_version"`
+	LastPoll      *string `json:"last_poll_time,omitempty"`
+	Error         string  `json:"error,omitempty"`
 }
 
 // handleInfo returns inverter identity and last poll time from the database.
@@ -407,15 +410,16 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 			}
 
 			writeJSON(w, http.StatusOK, inverterInfo{
-				Serial:   ident.Serial,
-				Model:    ident.Model,
-				Firmware: ident.Firmware,
-				Rated:    ident.RatedPower,
-				DSP:      ident.DSPVersion,
-				ARM:      ident.ARMVersion,
-				IP:       h.inverterIP,
-				LastPoll: lastPoll,
-				Error:    errStr,
+				Serial:        ident.Serial,
+				Model:         ident.Model,
+				Firmware:      ident.Firmware,
+				Rated:         ident.RatedPower,
+				DSP:           ident.DSPVersion,
+				ARM:           ident.ARMVersion,
+				IP:            h.inverterIP,
+				DaemonVersion: h.daemonVersion,
+				LastPoll:      lastPoll,
+				Error:         errStr,
 			})
 			return
 		}
@@ -461,14 +465,15 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := inverterInfo{
-		Serial:   info.SerialNumber,
-		Model:    info.Model,
-		Firmware: info.Firmware,
-		Rated:    info.RatedPower,
-		DSP:      info.DSPVersion,
-		ARM:      info.ARMVersion,
-		IP:       h.inverterIP,
-		Error:    errStr,
+		Serial:        info.SerialNumber,
+		Model:         info.Model,
+		Firmware:      info.Firmware,
+		Rated:         info.RatedPower,
+		DSP:           info.DSPVersion,
+		ARM:           info.ARMVersion,
+		IP:            h.inverterIP,
+		DaemonVersion: h.daemonVersion,
+		Error:         errStr,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -569,6 +574,13 @@ func loggingMiddleware(debug bool, next http.Handler) http.Handler {
 				"latency", latency.String(),
 			)
 		}
+	})
+}
+
+func (h *Handler) versionHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Goodwe-Daemon-Version", h.daemonVersion)
+		next.ServeHTTP(w, r)
 	})
 }
 
