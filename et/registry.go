@@ -40,6 +40,20 @@ const (
 	undef64 uint64 = 0xFFFFFFFFFFFFFFFF
 )
 
+const (
+	baseRegistersOffset    uint16 = 35100
+	baseRegistersCount     uint16 = 125
+	batteryRegistersOffset uint16 = 37000
+	batteryRegistersCount  uint16 = 24
+	mpptRegistersOffset    uint16 = 35301
+	mpptRegistersCount     uint16 = 61
+	meterRegistersOffset   uint16 = 36000
+	// meter fallback counts: 125 → 58 → 45
+	meterRegistersCount       uint16 = 125
+	meterRegistersCountFallb1 uint16 = 58
+	meterRegistersCountFallb2 uint16 = 45
+)
+
 type blockType int
 
 const (
@@ -61,16 +75,16 @@ var sensorLookup map[string]sensorBlock
 func init() {
 	sensorLookup = make(map[string]sensorBlock)
 	for name, def := range registry {
-		sensorLookup[name] = sensorBlock{block: blockMain, startReg: 35100, readQty: 125, def: def}
+		sensorLookup[name] = sensorBlock{block: blockMain, startReg: baseRegistersOffset, readQty: baseRegistersCount, def: def}
 	}
 	for name, def := range batteryRegistry {
-		sensorLookup[name] = sensorBlock{block: blockBattery, startReg: 37000, readQty: 24, def: def}
+		sensorLookup[name] = sensorBlock{block: blockBattery, startReg: batteryRegistersOffset, readQty: batteryRegistersCount, def: def}
 	}
 	for name, def := range meterRegistry {
-		sensorLookup[name] = sensorBlock{block: blockMeter, startReg: 36000, readQty: 125, def: def}
+		sensorLookup[name] = sensorBlock{block: blockMeter, startReg: meterRegistersOffset, readQty: meterRegistersCount, def: def}
 	}
 	for name, def := range mpptRegistry {
-		sensorLookup[name] = sensorBlock{block: blockMPPT, startReg: 35301, readQty: 61, def: def}
+		sensorLookup[name] = sensorBlock{block: blockMPPT, startReg: mpptRegistersOffset, readQty: mpptRegistersCount, def: def}
 	}
 }
 
