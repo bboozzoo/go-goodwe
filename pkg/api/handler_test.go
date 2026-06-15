@@ -45,65 +45,83 @@ import (
 // ---- mocks ----
 
 type mockInverter struct {
-	onConnect   func(ctx context.Context) error
-	onClose     func() error
-	onGetInfo   func(ctx context.Context) (*goodwe.Info, error)
+	onConnect    func(ctx context.Context) error
+	onClose      func() error
+	onGetInfo    func(ctx context.Context) (*goodwe.Info, error)
 	onGetSensors func(ctx context.Context) (map[string]goodwe.SensorValue, error)
 	onReadSensor func(ctx context.Context, name string) (goodwe.SensorValue, error)
 }
 
 func (m *mockInverter) Connect(ctx context.Context) error {
-	if m.onConnect != nil { return m.onConnect(ctx) }
+	if m.onConnect != nil {
+		return m.onConnect(ctx)
+	}
 	return nil
 }
 func (m *mockInverter) Close() error {
-	if m.onClose != nil { return m.onClose() }
+	if m.onClose != nil {
+		return m.onClose()
+	}
 	return nil
 }
 func (m *mockInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
-	if m.onGetInfo != nil { return m.onGetInfo(ctx) }
+	if m.onGetInfo != nil {
+		return m.onGetInfo(ctx)
+	}
 	return &goodwe.Info{SerialNumber: "TEST001", Model: "GW-TEST", RatedPower: 10000}, nil
 }
 func (m *mockInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
-	if m.onGetSensors != nil { return m.onGetSensors(ctx) }
+	if m.onGetSensors != nil {
+		return m.onGetSensors(ctx)
+	}
 	return nil, nil
 }
 func (m *mockInverter) ReadSensor(ctx context.Context, name string) (goodwe.SensorValue, error) {
-	if m.onReadSensor != nil { return m.onReadSensor(ctx, name) }
+	if m.onReadSensor != nil {
+		return m.onReadSensor(ctx, name)
+	}
 	return goodwe.SensorValue{}, fmt.Errorf("unknown sensor: %s", name)
 }
 
 type mockDaemonStatus struct {
-	state             InverterConnState
-	connErr           error
-	verificationErr   error
+	state           InverterConnState
+	connErr         error
+	verificationErr error
 }
 
 func (m *mockDaemonStatus) InverterState() InverterConnState { return m.state }
 func (m *mockDaemonStatus) ConnError() error                 { return m.connErr }
-func (m *mockDaemonStatus) VerificationError() error          { return m.verificationErr }
+func (m *mockDaemonStatus) VerificationError() error         { return m.verificationErr }
 
 type mockSensorStore struct {
-	onGetIdentity   func(ctx context.Context) (*db.InverterIdentity, error)
-	onQuerySamples  func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
-	onLatestSample  func(ctx context.Context, name string) (*db.Sample, error)
-	onLastTime      func(ctx context.Context) (*time.Time, error)
+	onGetIdentity  func(ctx context.Context) (*db.InverterIdentity, error)
+	onQuerySamples func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
+	onLatestSample func(ctx context.Context, name string) (*db.Sample, error)
+	onLastTime     func(ctx context.Context) (*time.Time, error)
 }
 
 func (m *mockSensorStore) GetInverterIdentity(ctx context.Context) (*db.InverterIdentity, error) {
-	if m.onGetIdentity != nil { return m.onGetIdentity(ctx) }
+	if m.onGetIdentity != nil {
+		return m.onGetIdentity(ctx)
+	}
 	return nil, nil
 }
 func (m *mockSensorStore) QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error) {
-	if m.onQuerySamples != nil { return m.onQuerySamples(ctx, name, since, until, limit) }
+	if m.onQuerySamples != nil {
+		return m.onQuerySamples(ctx, name, since, until, limit)
+	}
 	return []db.Sample{}, nil
 }
 func (m *mockSensorStore) LatestSample(ctx context.Context, name string) (*db.Sample, error) {
-	if m.onLatestSample != nil { return m.onLatestSample(ctx, name) }
+	if m.onLatestSample != nil {
+		return m.onLatestSample(ctx, name)
+	}
 	return nil, nil
 }
 func (m *mockSensorStore) LastSampleTime(ctx context.Context) (*time.Time, error) {
-	if m.onLastTime != nil { return m.onLastTime(ctx) }
+	if m.onLastTime != nil {
+		return m.onLastTime(ctx)
+	}
 	return nil, nil
 }
 

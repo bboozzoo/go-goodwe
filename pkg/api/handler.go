@@ -90,13 +90,13 @@ type SensorStore interface {
 
 // Handler serves the REST API endpoints.
 type Handler struct {
-	inverter       goodwe.Inverter // may be nil when no inverter is configured
-	daemon         DaemonStatus    // may be nil
-	store          SensorStore     // may be nil; aggregate endpoint returns 501
-	inverterIP     string          // IP address of the inverter, for display
-	daemonVersion  string          // daemon build version (set at construction)
-	debug          bool
-	mux            http.Handler
+	inverter      goodwe.Inverter // may be nil when no inverter is configured
+	daemon        DaemonStatus    // may be nil
+	store         SensorStore     // may be nil; aggregate endpoint returns 501
+	inverterIP    string          // IP address of the inverter, for display
+	daemonVersion string          // daemon build version (set at construction)
+	debug         bool
+	mux           http.Handler
 }
 
 // New creates an API handler. inverter, daemonStatus, and sensorStore may

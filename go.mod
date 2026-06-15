@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/pion/dtls/v2 v2.2.12
 	github.com/stretchr/testify v1.11.1
+	modernc.org/sqlite v1.52.0
 )
 
 require (
@@ -24,5 +25,4 @@ require (
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.52.0 // indirect
 )
