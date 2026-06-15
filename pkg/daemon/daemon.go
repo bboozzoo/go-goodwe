@@ -147,6 +147,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			switch d.getState() {
 			case api.InverterStateDisconnected:
 				d.doConnect(ctx)
+				// Reconnected successfully — poll immediately instead of
+				// waiting for the next pollInterval tick.
+				if d.getState() == api.InverterStateConnected {
+					d.doPoll(ctx)
+				}
 
 			case api.InverterStateConnected:
 				d.doPoll(ctx)
