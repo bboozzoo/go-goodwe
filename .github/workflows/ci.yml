@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [master]
+  pull_request:
 
 permissions:
   contents: read
@@ -16,6 +17,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run tests
         run: go test ./... -count=1
