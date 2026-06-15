@@ -65,15 +65,13 @@ func (e *ETInverter) Connect(ctx context.Context) error {
 	if e.transport == nil {
 		return fmt.Errorf("no transport configured: use discovery.Discover() instead of New()")
 	}
-	err := backoff(ctx, func() error {
-		// Close any previous connection before retry
-		if cerr := e.transport.Close(); cerr != nil {
-			slog.Warn("Error closing previous connection", "error", cerr)
-		}
 
-		return e.transport.Connect(ctx)
-	})
-	if err != nil {
+	// Close any previous connection before connecting.
+	if cerr := e.transport.Close(); cerr != nil {
+		slog.Warn("Error closing previous connection", "error", cerr)
+	}
+
+	if err := e.transport.Connect(ctx); err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 
@@ -85,15 +83,6 @@ func (e *ETInverter) Close() error {
 		return nil
 	}
 	return e.transport.Close()
-}
-
-// reconnect closes the existing connection and re-establishes it.
-func (e *ETInverter) reconnect(ctx context.Context) error {
-	slog.Info("Reconnecting to inverter...")
-	if err := e.transport.Close(); err != nil {
-		slog.Warn("Error closing existing connection", "error", err)
-	}
-	return e.Connect(ctx)
 }
 
 func (e *ETInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
@@ -297,15 +286,12 @@ func (e *ETInverter) ReadSensor(ctx context.Context, name string) (goodwe.Sensor
 	}, nil
 }
 
-// readOnceWithFallback tries a bulk read, reconnecting once on connection errors.
+// readOnceWithFallback tries a bulk read. On connection errors it delegates
+// reconnection to the transport layer, which auto-reconnects on closed conns.
 func (e *ETInverter) readOnceWithFallback(ctx context.Context, startReg, quantity uint16) ([]byte, error) {
 	data, err := e.transport.ReadRegisters(ctx, startReg, quantity)
 	if err != nil && !isIllegalDataAddress(err) {
-		slog.Warn("Modbus read failed, attempting reconnect", "error", err)
-		if rerr := e.reconnect(ctx); rerr != nil {
-			return nil, fmt.Errorf("reconnect failed: %w (original error: %v)", rerr, err)
-		}
-		data, err = e.transport.ReadRegisters(ctx, startReg, quantity)
+		slog.Warn("Modbus read failed", "error", err)
 	}
 	return data, err
 }
