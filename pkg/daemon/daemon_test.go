@@ -44,35 +44,43 @@ import (
 // ---- mock inverter ----
 
 type mockInverter struct {
-	mu            sync.Mutex
-	connectCount  int
-	closeCount    int
-	onConnect     func(ctx context.Context) error
-	onClose       func() error
-	onGetInfo     func(ctx context.Context) (*goodwe.Info, error)
-	onGetSensors  func(ctx context.Context) (map[string]goodwe.SensorValue, error)
+	mu           sync.Mutex
+	connectCount int
+	closeCount   int
+	onConnect    func(ctx context.Context) error
+	onClose      func() error
+	onGetInfo    func(ctx context.Context) (*goodwe.Info, error)
+	onGetSensors func(ctx context.Context) (map[string]goodwe.SensorValue, error)
 }
 
 func (m *mockInverter) Connect(ctx context.Context) error {
 	m.mu.Lock()
 	m.connectCount++
 	m.mu.Unlock()
-	if m.onConnect != nil { return m.onConnect(ctx) }
+	if m.onConnect != nil {
+		return m.onConnect(ctx)
+	}
 	return nil
 }
 func (m *mockInverter) Close() error {
 	m.mu.Lock()
 	m.closeCount++
 	m.mu.Unlock()
-	if m.onClose != nil { return m.onClose() }
+	if m.onClose != nil {
+		return m.onClose()
+	}
 	return nil
 }
 func (m *mockInverter) GetInfo(ctx context.Context) (*goodwe.Info, error) {
-	if m.onGetInfo != nil { return m.onGetInfo(ctx) }
+	if m.onGetInfo != nil {
+		return m.onGetInfo(ctx)
+	}
 	return &goodwe.Info{SerialNumber: "TEST001", Model: "GW-TEST", RatedPower: 10000}, nil
 }
 func (m *mockInverter) GetSensors(ctx context.Context) (map[string]goodwe.SensorValue, error) {
-	if m.onGetSensors != nil { return m.onGetSensors(ctx) }
+	if m.onGetSensors != nil {
+		return m.onGetSensors(ctx)
+	}
 	return map[string]goodwe.SensorValue{}, nil
 }
 func (m *mockInverter) ReadSensor(ctx context.Context, name string) (goodwe.SensorValue, error) {
