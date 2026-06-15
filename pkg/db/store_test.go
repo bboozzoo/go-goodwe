@@ -258,12 +258,12 @@ func TestInverterIdentityCRUD(t *testing.T) {
 	ident, err = s.GetInverterIdentity(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, ident)
-	assert.Equal(t, "SERIAL001", ident.Serial)      // unchanged
-	assert.Equal(t, "GW15K-ET20", ident.Model)       // updated
-	assert.Equal(t, "new-fw", ident.Firmware)         // updated
-	assert.Equal(t, "08", ident.DSPVersion)           // updated
-	assert.Equal(t, "14", ident.ARMVersion)           // updated
-	assert.Equal(t, 12000, ident.RatedPower)          // updated
+	assert.Equal(t, "SERIAL001", ident.Serial)            // unchanged
+	assert.Equal(t, "GW15K-ET20", ident.Model)            // updated
+	assert.Equal(t, "new-fw", ident.Firmware)             // updated
+	assert.Equal(t, "08", ident.DSPVersion)               // updated
+	assert.Equal(t, "14", ident.ARMVersion)               // updated
+	assert.Equal(t, 12000, ident.RatedPower)              // updated
 	assert.True(t, ident.LastSeen.After(ident.FirstSeen)) // last_seen moved forward
 }
 
