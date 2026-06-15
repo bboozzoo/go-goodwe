@@ -18,8 +18,14 @@ jobs:
         with:
           go-version: stable
 
-      - name: Run go vet
-        run: go vet ./...
+      - name: Check gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
 
       - name: Run tests
         run: go test ./... -count=1
