@@ -49,9 +49,9 @@ const (
 	mpptRegistersCount     uint16 = 61
 	meterRegistersOffset   uint16 = 36000
 	// meter fallback counts: 125 → 58 → 45
-	meterRegistersCount        uint16 = 125
-	meterRegistersCountFallb1  uint16 = 58
-	meterRegistersCountFallb2  uint16 = 45
+	meterRegistersCount       uint16 = 125
+	meterRegistersCountFallb1 uint16 = 58
+	meterRegistersCountFallb2 uint16 = 45
 )
 
 type blockType int
