@@ -1,6 +1,16 @@
-# Open Issues — go-goodwe @ fb652d8
+# Open Issues — go-goodwe @ 9f48d70
 
-All issues found by reviewing the codebase at master commit `fb652d8`.
+Issues found by reviewing the codebase at master commit `9f48d70`.
+
+## Changelog since previous review (fb652d8 → 9f48d70)
+
+| PR / Commit | What changed | Effect on issues |
+|-------------|-------------|-----------------|
+| PR #1 (`017e978`) | Add table-driven tests for `parseProbeResponse` | **Issue 6.1 resolved** |
+| PR #2 (`1835ff0`) | Add REST API curl examples to README | **Issue 7.1 resolved** |
+| PR #3 (`9f48d70`) | Remove stale `/api/status` TODO references from `TODO.md` | **Issue 4.5 closed as won't-do** — the requirement was dropped rather than implemented |
+
+---
 
 ---
 
@@ -269,28 +279,16 @@ A crash or forced shutdown mid-poll leaves a partial set of samples for that tic
 
 ---
 
-### 4.5 `/api/status` endpoint not implemented
+### ~~4.5 `/api/status` endpoint~~ — **Closed (won't do)**
 
-**File:** `pkg/api/handler.go`
-
-The dashboard Live Status View requires a single endpoint returning all live
-sensor readings. It is listed as pending and no route exists.
-
-**Action:**
-- Add `GET /api/status` route.
-- Call `inverter.GetSensors(ctx)` and return the full map as JSON structured by
-  category:
-  ```json
-  {
-    "sensors": {"ppv": {"value": 3200, "unit": "W", ...}},
-    "timestamp": "2026-06-14T20:00:00Z"
-  }
-  ```
-- Dashboard auto-refreshes this endpoint every 5 s in Live mode.
+The requirement was dropped in PR #3 / commit `25ac08b`. The stale TODO
+references in `TODO.md` were removed without implementing the endpoint.
+If a live-all-sensors endpoint is reconsidered in future, a new issue should
+be filed.
 
 ---
 
-### 4.6 Purge endpoints not implemented
+### 4.5 Purge endpoints not implemented
 
 **File:** `pkg/api/handler.go`
 
@@ -359,15 +357,11 @@ battery mode, etc.). Nothing is ported.
 
 ## Section 6 — Testing Gaps
 
-### 6.1 `parseProbeResponse` has no edge-case tests
+### ~~6.1 `parseProbeResponse` has no edge-case tests~~ — **Resolved (PR #1)**
 
-**File:** `discovery/discover.go:97`
-
-`parseProbeResponse` handles `@busy` responses and edge cases in the probe
-string format, but there are no unit tests covering these paths.
-
-**Action:** Add table-driven tests for `@busy`, missing fields, malformed
-response strings, and the DTLS vs TCP detection branch.
+`discovery/discover_test.go` now contains `TestParseProbeResponse` with
+table-driven cases covering `@busy` variants, DTLS format, TCP format,
+missing fields, and malformed input.
 
 ---
 
@@ -396,29 +390,26 @@ that replays captured hex frames) wired into `go test -tags=integration`.
 
 ---
 
-### 6.4 Public API has no Go doc comments
+### 6.4 Several exported symbols lack Go doc comments (partial)
 
-**File:** `goodwe.go`, `et/et.go`, `discovery/discover.go`
+**Status:** `goodwe.go` (`ErrUnsupported`, `SensorValue`, `Info`, `Inverter`)
+and `discovery/discover.go` (`parseProbeResponse`, `Discover`) now have doc
+comments. `et/et.go` still lacks doc comments on `Connect`, `Close`, `GetInfo`,
+and `GetSensors`.
 
-Exported types and functions (`Inverter`, `GetSensors`, `GetInfo`, `Discover`,
-`SensorValue`, `Info`, `ErrUnsupported`) have no Go doc comments, making the
-package hard to use from godoc or IDE hover.
+**File:** `et/et.go:64,83,99,160`
 
-**Action:** Add doc comments to all exported symbols.
+**Action:** Add doc comments to `Connect`, `Close`, `GetInfo`, `GetSensors` in
+`et/et.go`.
 
 ---
 
 ## Section 7 — Documentation
 
-### 7.1 README missing API usage examples
+### ~~7.1 README missing API usage examples~~ — **Resolved (PR #2)**
 
-**File:** `README.md`
-
-The daemon REST API is described in `TODO.md` but `README.md` contains no `curl`
-examples for any endpoint.
-
-**Action:** Add a "REST API" section to README with `curl` examples for:
-`/api/health`, `/api/info`, `/api/sensors`, `/api/data/{sensor}`,
+`README.md` now contains a "REST API" section with `curl` examples for
+`/api/health`, `/api/info`, `/api/sensors`, `/api/data/{sensor}`, and
 `/api/data/{sensor}/aggregate`.
 
 ---
