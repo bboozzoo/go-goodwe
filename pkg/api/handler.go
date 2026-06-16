@@ -406,6 +406,8 @@ func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 			if h.daemon != nil {
 				if verr := h.daemon.VerificationError(); verr != nil {
 					errStr = verr.Error()
+				} else if cerr := h.daemon.ConnError(); cerr != nil {
+					errStr = cerr.Error()
 				}
 			}
 
