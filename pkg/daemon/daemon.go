@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/bboozzoo/go-goodwe"
+	"github.com/bboozzoo/go-goodwe/discovery"
 	"github.com/bboozzoo/go-goodwe/pkg/api"
 	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
@@ -48,6 +49,7 @@ const (
 type Daemon struct {
 	inverter     goodwe.Inverter // may be nil when no inverter is configured
 	store        *db.Store       // may be nil when no database is configured
+	inverterIP   string          // IP address of the inverter, for diagnostics
 	pollInterval time.Duration   // zero means no polling
 
 	mu               sync.RWMutex
@@ -59,10 +61,11 @@ type Daemon struct {
 
 // New creates a new Daemon. inverter and store may be nil; the poll loop
 // is a no-op until an inverter is provided. pollInterval of 0 disables polling.
-func New(inverter goodwe.Inverter, store *db.Store, pollInterval time.Duration) *Daemon {
+func New(inverter goodwe.Inverter, store *db.Store, inverterIP string, pollInterval time.Duration) *Daemon {
 	d := &Daemon{
 		inverter:     inverter,
 		store:        store,
+		inverterIP:   inverterIP,
 		pollInterval: pollInterval,
 	}
 	if inverter == nil {
@@ -191,7 +194,11 @@ func (d *Daemon) doConnect(ctx context.Context) {
 	slog.Info("Connecting to inverter...")
 
 	if err := d.inverter.Connect(ctx); err != nil {
-		slog.Warn("Connection failed", "error", err)
+		if d.inverterIP != "" && discovery.Ping(ctx, d.inverterIP) {
+			slog.Warn("Connection failed — dongle responded to probe but DTLS connection refused", "error", err)
+		} else {
+			slog.Warn("Connection failed", "error", err)
+		}
 		d.setState(api.InverterStateDisconnected, err)
 		return
 	}
@@ -251,7 +258,7 @@ func (d *Daemon) doPoll(ctx context.Context) {
 		stored++
 	}
 
-	slog.Debug("Poll cycle complete", "sensors_read", len(sensors), "stored", stored)
+	slog.Info("Poll cycle complete", "sensors_read", len(sensors), "stored", stored)
 }
 
 // closeConnection closes the inverter connection, ignoring errors.

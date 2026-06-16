@@ -139,7 +139,7 @@ func main() {
 	}
 
 	// Create the daemon (may have nil inverter — handled gracefully).
-	dmn := daemon.New(inverter, store, *pollInterval)
+	dmn := daemon.New(inverter, store, *inverterIP, *pollInterval)
 
 	// Create the API handler with the inverter, daemon status, and store.
 	handler := api.New(inverter, dmn, store, *inverterIP, getVersion(), *debug)

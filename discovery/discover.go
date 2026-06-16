@@ -167,6 +167,18 @@ func isETModel(serial string) bool {
 	return false
 }
 
+// Ping sends a lightweight UDP probe to the dongle's discovery port (48899)
+// and returns true if the dongle responds. This is a connectivity check that
+// works independently of the DTLS server — useful for diagnosing whether the
+// dongle is reachable even when the DTLS handshake fails.
+func Ping(ctx context.Context, ip string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	_, err := probe(ctx, ip)
+	return err == nil
+}
+
 // Discover probes the inverter at the given IP address, detects its type and
 // transport protocol, and returns a fully configured Inverter ready for use.
 //
