@@ -31,7 +31,9 @@ python/
 # Test data (large, not needed for build)
 et/testdata/
 
-# Docker
+# Stray build artifacts (not needed for Docker build)
+goodwe-daemon-arm
+
+# Docker build context (not copied into image layers — handled by COPY --from=builder)
 .dockerignore
 Dockerfile
-docker/
