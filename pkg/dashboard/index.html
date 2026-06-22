@@ -518,7 +518,7 @@ async function refreshGraph(graph) {
               if (range === '1h' || range === '6h') {
                 return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
               }
-              return ('0' + d.getMonth()+1).slice(-2) + '/' + ('0' + d.getDate()).slice(-2);
+              return (d.getMonth() + 1) + '/' + d.getDate();
             },
           },
           grid: { color: getCSSVar('--border') },
