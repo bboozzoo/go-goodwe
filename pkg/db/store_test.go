@@ -110,6 +110,32 @@ func TestInsertAndQuerySamples(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, samples)
 	})
+
+	t.Run("query returns most recent samples when limited", func(t *testing.T) {
+		// Insert samples with increasing timestamps.
+		base := now.Add(-10 * time.Second)
+		for i := 0; i < 5; i++ {
+			err := s.InsertSample(ctx, "recent_test", "W", base.Add(time.Duration(i)*time.Second), samplePtr(float64(100+i)), nil)
+			require.NoError(t, err)
+		}
+
+		// Query with limit smaller than total — should return the most recent ones.
+		samples, err := s.QueryRawSamples(ctx, "recent_test", base, base.Add(10*time.Second), 3)
+		require.NoError(t, err)
+		require.Len(t, samples, 3)
+
+		// They should be the 3 most recent samples, in ascending order.
+		require.NotNil(t, samples[0].Value)
+		require.NotNil(t, samples[1].Value)
+		require.NotNil(t, samples[2].Value)
+		assert.Equal(t, 102.0, *samples[0].Value, "oldest of the 3 most recent")
+		assert.Equal(t, 103.0, *samples[1].Value)
+		assert.Equal(t, 104.0, *samples[2].Value, "most recent")
+
+		// Timestamps must also be in ascending order.
+		assert.True(t, samples[0].SampledAt.Before(samples[1].SampledAt))
+		assert.True(t, samples[1].SampledAt.Before(samples[2].SampledAt))
+	})
 }
 
 func TestLatestSample(t *testing.T) {
