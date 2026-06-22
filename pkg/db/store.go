@@ -146,11 +146,12 @@ func (s *Store) InsertSample(ctx context.Context, name, unit string, sampledAt t
 	return nil
 }
 
-// QueryRawSamples returns raw sensor samples matching the given criteria.
+// QueryRawSamples returns raw sensor samples matching the given criteria,
+// most recent first (capped by limit), then reversed into ascending order.
 func (s *Store) QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]Sample, error) {
 	query := `SELECT value, value_text, unit, sampled_at FROM sensor_samples
 		 WHERE sensor_name = ? AND sampled_at >= ? AND sampled_at <= ?
-		 ORDER BY sampled_at ASC LIMIT ?`
+		 ORDER BY sampled_at DESC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, name, since, until, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query samples: %w", err)
@@ -170,6 +171,10 @@ func (s *Store) QueryRawSamples(ctx context.Context, name string, since, until t
 	}
 	if samples == nil {
 		samples = []Sample{}
+	}
+	// Reverse back to ascending order (query was DESC to get most recent first).
+	for i, j := 0, len(samples)-1; i < j; i, j = i+1, j-1 {
+		samples[i], samples[j] = samples[j], samples[i]
 	}
 	return samples, nil
 }
