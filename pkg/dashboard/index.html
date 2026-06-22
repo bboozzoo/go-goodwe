@@ -452,9 +452,9 @@ async function refreshGraph(graph) {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
       const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
-      const down = downsample(raw, MAX_POINTS);
-      const values = insertNullGaps(down);
-      datasets.push({ label: name, data: values, borderColor: colorForIndex(datasets.length),
+      const values = insertNullGaps(raw);
+      const down = downsample(values, MAX_POINTS);
+      datasets.push({ label: name, data: down, borderColor: colorForIndex(datasets.length),
                       fill: false, tension: 0.1, spanGaps: false, pointRadius: 0,
                       borderWidth: 1 });
     } catch (e) {
