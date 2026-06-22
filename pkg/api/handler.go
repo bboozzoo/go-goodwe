@@ -341,7 +341,7 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 1000
+	limit := 100000
 	if limitStr != "" {
 		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
 			limit = n
@@ -361,6 +361,10 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	if samples == nil {
 		samples = []db.Sample{}
 	}
+
+	// Downsample to prevent sending too many data points to the dashboard.
+	const maxPoints = 2000
+	samples = downsample(samples, maxPoints)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sensor":  sensorName,
@@ -608,4 +612,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeJSONError writes a JSON error response.
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// downsample evenly reduces samples to at most max points by picking every Nth element.
+func downsample(samples []db.Sample, max int) []db.Sample {
+	if len(samples) <= max {
+		return samples
+	}
+	step := (len(samples) + max - 1) / max
+	result := make([]db.Sample, 0, max)
+	for i := 0; i < len(samples); i += step {
+		result = append(result, samples[i])
+	}
+	return result
 }

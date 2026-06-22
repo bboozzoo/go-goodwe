@@ -517,3 +517,88 @@ func TestGzipNotRequested(t *testing.T) {
 	assert.Equal(t, 200, rr.Code)
 	assert.Empty(t, rr.Header().Get("Content-Encoding"))
 }
+
+// ---- downsample -------
+
+func TestDownsample_Empty(t *testing.T) {
+	result := downsample(nil, 100)
+	assert.Empty(t, result)
+}
+
+func TestDownsample_BelowMax(t *testing.T) {
+	samples := makeSamples(5)
+	result := downsample(samples, 10)
+	assert.Equal(t, samples, result, "should return original when len <= max")
+}
+
+func TestDownsample_AtMax(t *testing.T) {
+	samples := makeSamples(10)
+	result := downsample(samples, 10)
+	assert.Equal(t, samples, result, "should return original when len == max")
+}
+
+func TestDownsample_ReducesCount(t *testing.T) {
+	samples := makeSamples(1000)
+	result := downsample(samples, 50)
+	assert.LessOrEqual(t, len(result), 50, "should not exceed max")
+	assert.Greater(t, len(result), 0, "should contain at least one sample")
+}
+
+func TestDownsample_PreservesFirstElement(t *testing.T) {
+	samples := makeSamples(100)
+	result := downsample(samples, 10)
+	assert.Equal(t, samples[0].Value, result[0].Value, "first element should be preserved")
+}
+
+func TestDownsample_EvenSpacing(t *testing.T) {
+	samples := makeSamples(100)
+	result := downsample(samples, 20)
+	// With 100 samples and max 20, step = (100+20-1)/20 = 5.
+	// Result should be indices 0,5,10,...,95 = 20 elements.
+	assert.Equal(t, 20, len(result))
+	for i := range result {
+		expectedIdx := i * 5
+		if expectedIdx >= len(samples) {
+			t.Fatalf("index %d out of bounds", expectedIdx)
+		}
+		assert.Equal(t, samples[expectedIdx].Value, result[i].Value, "element %d should match index %d", i, expectedIdx)
+	}
+}
+
+func TestDownsample_ReturnsAtMostMax(t *testing.T) {
+	t.Run("2000->1999", func(t *testing.T) {
+		samples := makeSamples(2000)
+		result := downsample(samples, 1999)
+		assert.LessOrEqual(t, len(result), 1999)
+	})
+	t.Run("100->99", func(t *testing.T) {
+		samples := makeSamples(100)
+		result := downsample(samples, 99)
+		assert.LessOrEqual(t, len(result), 99)
+	})
+	t.Run("7->3", func(t *testing.T) {
+		samples := makeSamples(7)
+		result := downsample(samples, 3)
+		assert.LessOrEqual(t, len(result), 3)
+		// step = (7+3-1)/3 = 3 → indices 0,3,6
+		assert.Equal(t, 3, len(result))
+		assert.Equal(t, samples[0], result[0])
+		assert.Equal(t, samples[3], result[1])
+		assert.Equal(t, samples[6], result[2])
+	})
+	t.Run("1->1", func(t *testing.T) {
+		samples := makeSamples(1)
+		result := downsample(samples, 1)
+		assert.Equal(t, samples, result)
+	})
+}
+
+// makeSamples creates n samples with sequential float64 values (0..n-1).
+func makeSamples(n int) []db.Sample {
+	s := make([]db.Sample, n)
+	for i := 0; i < n; i++ {
+		v := float64(i)
+		s[i] = db.Sample{Value: &v, Unit: "W", SampledAt: time.Now()}
+	}
+	return s
+}
