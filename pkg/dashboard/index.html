@@ -492,6 +492,11 @@ async function refreshGraph(graph) {
   }
 
   const ctx = canvas.getContext('2d');
+
+  // Pin x-axis to the exact window boundaries so there's no margin padding.
+  const xMin = new Date(params.since).getTime();
+  const xMax = new Date(params.until).getTime();
+
   graph.chart = new Chart(ctx, {
     type: 'line',
     data: { datasets },
@@ -502,6 +507,8 @@ async function refreshGraph(graph) {
       scales: {
         x: {
           type: 'linear',
+          min: xMin,
+          max: xMax,
           ticks: {
             color: getCSSVar('--text-muted'),
             maxTicksLimit: 10,
