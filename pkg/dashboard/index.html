@@ -64,6 +64,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .system-grid .card .value.on-grid { color: var(--color-on-grid); }
 .system-grid .card .value.off-grid { color: var(--color-off-grid); }
 .system-grid .card .value.fault { color: var(--color-fault); }
+.system-grid .separator { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
 .layout { display: flex; gap: 0; height: calc(100vh - 200px); }
 .sensor-list { width: 280px; min-width: 280px; overflow-y: auto; background: var(--bg-surface);
                border-right: 1px solid var(--border); padding: 0.5rem; }
@@ -138,8 +139,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="card"><div class="label">Grid Mode</div><div class="value" id="sys-grid-mode">-</div></div>
   <div class="card"><div class="label">House Consumption</div><div class="value" id="sys-house">-</div></div>
   <div class="card"><div class="label">PV Power</div><div class="value" id="sys-pv">-</div></div>
-  <div class="card"><div class="label">Battery SoC</div><div class="value" id="sys-battery">-</div></div>
+  <div class="card"><div class="label">🔋 Battery SoC</div><div class="value" id="sys-battery">-</div></div>
   <div class="card"><div class="label">Errors</div><div class="value" id="sys-errors" style="font-size:0.85rem">-</div></div>
+  <hr class="separator">
+  <div class="card"><div class="label">☀ PV Today</div><div class="value" id="sys-pv-today">-</div></div>
+  <div class="card"><div class="label">⚡ Load Today</div><div class="value" id="sys-load-today">-</div></div>
 </div>
 
 <div class="layout">
@@ -260,12 +264,14 @@ async function fetchLatest(sensor) {
 async function loadStatus() {
   try {
     // Fetch latest samples from DB for the system status section.
-    const [grid, house, pv, battery, errors] = await Promise.all([
+    const [grid, house, pv, battery, errors, pvToday, loadToday] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
       fetchLatest('ppv'),
       fetchLatest('battery_soc'),
       fetchLatest('errors'),
+      fetchLatest('e_day'),
+      fetchLatest('e_load_day'),
     ]);
 
     if (grid) {
@@ -285,6 +291,10 @@ async function loadStatus() {
       battery ? (battery.value != null ? battery.value + ' %' : battery.value_text || '-') : '-';
     document.getElementById('sys-errors').textContent =
       errors && errors.value_text ? errors.value_text : 'None';
+    document.getElementById('sys-pv-today').textContent =
+      pvToday ? (pvToday.value != null ? pvToday.value + ' kWh' : pvToday.value_text || '-') : '-';
+    document.getElementById('sys-load-today').textContent =
+      loadToday ? (loadToday.value != null ? loadToday.value + ' kWh' : loadToday.value_text || '-') : '-';
   } catch (e) {
     // status display is best-effort
   }
