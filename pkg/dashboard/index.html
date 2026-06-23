@@ -144,6 +144,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <hr class="separator">
   <div class="card"><div class="label">☀ PV Today</div><div class="value" id="sys-pv-today">-</div></div>
   <div class="card"><div class="label">⚡ Load Today</div><div class="value" id="sys-load-today">-</div></div>
+  <div class="card"><div class="label">⬇ Grid Import</div><div class="value" id="sys-grid-import">-</div></div>
+  <div class="card"><div class="label">⬆ Grid Export</div><div class="value" id="sys-grid-export">-</div></div>
 </div>
 
 <div class="layout">
@@ -303,6 +305,10 @@ async function loadStatus() {
       : null;
     document.getElementById('sys-load-today').textContent =
       loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
+    document.getElementById('sys-grid-import').textContent =
+      gridImpToday ? (gridImpToday.value != null ? gridImpToday.value + ' kWh' : gridImpToday.value_text || '-') : '-';
+    document.getElementById('sys-grid-export').textContent =
+      gridExpToday ? (gridExpToday.value != null ? gridExpToday.value + ' kWh' : gridExpToday.value_text || '-') : '-';
   } catch (e) {
     // status display is best-effort
   }
