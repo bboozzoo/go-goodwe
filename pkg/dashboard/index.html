@@ -264,13 +264,15 @@ async function fetchLatest(sensor) {
 async function loadStatus() {
   try {
     // Fetch latest samples from DB for the system status section.
-    const [grid, house, pv, battery, errors, pvToday, batDischargeToday, batChargeToday] = await Promise.all([
+    const [grid, house, pv, battery, errors, pvToday, gridImpToday, gridExpToday, batDischargeToday, batChargeToday] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
       fetchLatest('ppv'),
       fetchLatest('battery_soc'),
       fetchLatest('errors'),
       fetchLatest('e_day'),
+      fetchLatest('e_day_imp'),
+      fetchLatest('e_day_exp'),
       fetchLatest('e_bat_discharge_day'),
       fetchLatest('e_bat_charge_day'),
     ]);
@@ -294,9 +296,10 @@ async function loadStatus() {
       errors && errors.value_text ? errors.value_text : 'None';
     document.getElementById('sys-pv-today').textContent =
       pvToday ? (pvToday.value != null ? pvToday.value + ' kWh' : pvToday.value_text || '-') : '-';
-    // Daily house load = PV generated + battery discharged - battery charged
+    // Daily house load = PV + grid_import - grid_export + battery_discharge - battery_charge
     const loadVal = pvToday && pvToday.value != null
-      ? (pvToday.value + (batDischargeToday?.value ?? 0) - (batChargeToday?.value ?? 0))
+      ? (pvToday.value + (gridImpToday?.value ?? 0) - (gridExpToday?.value ?? 0)
+         + (batDischargeToday?.value ?? 0) - (batChargeToday?.value ?? 0))
       : null;
     document.getElementById('sys-load-today').textContent =
       loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
