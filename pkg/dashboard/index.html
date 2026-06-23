@@ -264,14 +264,15 @@ async function fetchLatest(sensor) {
 async function loadStatus() {
   try {
     // Fetch latest samples from DB for the system status section.
-    const [grid, house, pv, battery, errors, pvToday, loadToday] = await Promise.all([
+    const [grid, house, pv, battery, errors, pvToday, batDischargeToday, batChargeToday] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
       fetchLatest('ppv'),
       fetchLatest('battery_soc'),
       fetchLatest('errors'),
       fetchLatest('e_day'),
-      fetchLatest('e_load_day'),
+      fetchLatest('e_bat_discharge_day'),
+      fetchLatest('e_bat_charge_day'),
     ]);
 
     if (grid) {
@@ -293,8 +294,12 @@ async function loadStatus() {
       errors && errors.value_text ? errors.value_text : 'None';
     document.getElementById('sys-pv-today').textContent =
       pvToday ? (pvToday.value != null ? pvToday.value + ' kWh' : pvToday.value_text || '-') : '-';
+    // Daily house load = PV generated + battery discharged - battery charged
+    const loadVal = pvToday && pvToday.value != null
+      ? (pvToday.value + (batDischargeToday?.value ?? 0) - (batChargeToday?.value ?? 0))
+      : null;
     document.getElementById('sys-load-today').textContent =
-      loadToday ? (loadToday.value != null ? loadToday.value + ' kWh' : loadToday.value_text || '-') : '-';
+      loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
   } catch (e) {
     // status display is best-effort
   }
