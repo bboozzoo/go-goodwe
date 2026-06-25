@@ -290,14 +290,17 @@ async function loadStatus() {
     }
     document.getElementById('sys-house').textContent =
       house ? (house.value != null ? house.value + ' W' : house.value_text || '-') : '-';
+    document.getElementById('sys-house').title = 'ppv1 + ppv2 + ppv3 + ppv4 + pbattery - grid_power';
     document.getElementById('sys-pv').textContent =
       pv ? (pv.value != null ? pv.value + ' W' : pv.value_text || '-') : '-';
+    document.getElementById('sys-pv').title = 'ppv1 + ppv2 + ppv3 + ppv4';
     document.getElementById('sys-battery').textContent =
       battery ? (battery.value != null ? battery.value + ' %' : battery.value_text || '-') : '-';
     document.getElementById('sys-errors').textContent =
       errors && errors.value_text ? errors.value_text : 'None';
     document.getElementById('sys-pv-today').textContent =
       pvToday ? (pvToday.value != null ? pvToday.value + ' kWh' : pvToday.value_text || '-') : '-';
+    document.getElementById('sys-pv-today').title = 'e_day — daily PV generation';
     // Daily house load = PV + grid_import - grid_export + battery_discharge - battery_charge
     const loadVal = pvToday && pvToday.value != null
       ? (pvToday.value + (gridImpToday?.value ?? 0) - (gridExpToday?.value ?? 0)
@@ -305,10 +308,14 @@ async function loadStatus() {
       : null;
     document.getElementById('sys-load-today').textContent =
       loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
+    document.getElementById('sys-load-today').title =
+      'e_day + e_day_imp - e_day_exp + e_bat_discharge_day - e_bat_charge_day';
     document.getElementById('sys-grid-import').textContent =
       gridImpToday ? (gridImpToday.value != null ? gridImpToday.value + ' kWh' : gridImpToday.value_text || '-') : '-';
+    document.getElementById('sys-grid-import').title = 'e_day_imp — daily import energy';
     document.getElementById('sys-grid-export').textContent =
       gridExpToday ? (gridExpToday.value != null ? gridExpToday.value + ' kWh' : gridExpToday.value_text || '-') : '-';
+    document.getElementById('sys-grid-export').title = 'e_day_exp — daily export energy';
   } catch (e) {
     // status display is best-effort
   }
