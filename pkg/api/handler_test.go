@@ -98,6 +98,7 @@ type mockSensorStore struct {
 	onQuerySamples func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
 	onLatestSample func(ctx context.Context, name string) (*db.Sample, error)
 	onLastTime     func(ctx context.Context) (*time.Time, error)
+	onSampleAt     func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
 }
 
 func (m *mockSensorStore) GetInverterIdentity(ctx context.Context) (*db.InverterIdentity, error) {
@@ -121,6 +122,12 @@ func (m *mockSensorStore) LatestSample(ctx context.Context, name string) (*db.Sa
 func (m *mockSensorStore) LastSampleTime(ctx context.Context) (*time.Time, error) {
 	if m.onLastTime != nil {
 		return m.onLastTime(ctx)
+	}
+	return nil, nil
+}
+func (m *mockSensorStore) SampleAt(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
+	if m.onSampleAt != nil {
+		return m.onSampleAt(ctx, name, at)
 	}
 	return nil, nil
 }
@@ -440,6 +447,94 @@ func TestAggregate_EmptySensor(t *testing.T) {
 	// Go 1.22+ mux requires non-empty path segments; // doesn't match
 	// the route so falls through to the root handler -> 307 redirect.
 	assert.Equal(t, 307, rr.Code)
+}
+
+func TestAggregate_DeltaInvalidFormat(t *testing.T) {
+	ss := &mockSensorStore{}
+	h := newHandler(&mockInverter{}, nil, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=not-a-date&limit=1", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 400, rr.Code)
+	body := getBody(t, rr)
+	assert.Contains(t, body["error"], "delta format")
+}
+
+func TestAggregate_DeltaNoRefSample(t *testing.T) {
+	ss := &mockSensorStore{
+		onSampleAt: func(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
+			return nil, nil // no sample at delta timestamp
+		},
+	}
+	h := newHandler(&mockInverter{}, nil, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=2026-01-01T00:00:00Z&limit=1", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 400, rr.Code)
+	body := getBody(t, rr)
+	assert.Contains(t, body["error"], "no sample found")
+}
+
+func TestAggregate_DeltaAdjustsValue(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	refVal := 1000.0
+	curVal := 1042.5
+	ss := &mockSensorStore{
+		onSampleAt: func(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
+			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: now.Add(-12 * time.Hour)}, nil
+		},
+		onQuerySamples: func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error) {
+			return []db.Sample{
+				{Value: &curVal, Unit: "kWh", SampledAt: now},
+			}, nil
+		},
+	}
+	h := newHandler(&mockInverter{}, nil, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=2026-01-01T00:00:00Z&limit=1", nil)
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	assert.Equal(t, "e_total_exp", body["sensor"])
+	samples := body["samples"].([]any)
+	require.Len(t, samples, 1)
+	s := samples[0].(map[string]any)
+	// curVal - refVal = 1042.5 - 1000.0 = 42.5
+	assert.Equal(t, 42.5, s["value"])
+}
+
+func TestAggregate_DeltaAdjustsMultipleSamples(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	refVal := 1000.0
+	ss := &mockSensorStore{
+		onSampleAt: func(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
+			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: now.Add(-24 * time.Hour)}, nil
+		},
+		onQuerySamples: func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error) {
+			v1, v2, v3 := 1005.0, 1010.0, 1015.0
+			return []db.Sample{
+				{Value: &v1, Unit: "kWh", SampledAt: now.Add(-2 * time.Hour)},
+				{Value: &v2, Unit: "kWh", SampledAt: now.Add(-1 * time.Hour)},
+				{Value: &v3, Unit: "kWh", SampledAt: now},
+			}, nil
+		},
+	}
+	h := newHandler(&mockInverter{}, nil, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=2026-01-01T00:00:00Z&limit=3", nil)
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	samples := body["samples"].([]any)
+	require.Len(t, samples, 3)
+	s0 := samples[0].(map[string]any)
+	s1 := samples[1].(map[string]any)
+	s2 := samples[2].(map[string]any)
+	assert.Equal(t, 5.0, s0["value"])  // 1005 - 1000
+	assert.Equal(t, 10.0, s1["value"]) // 1010 - 1000
+	assert.Equal(t, 15.0, s2["value"]) // 1015 - 1000
 }
 
 // ---- redirect ----

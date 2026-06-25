@@ -86,6 +86,7 @@ type SensorStore interface {
 	QueryRawSamples(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
 	LatestSample(ctx context.Context, name string) (*db.Sample, error)
 	LastSampleTime(ctx context.Context) (*time.Time, error)
+	SampleAt(ctx context.Context, name string, at time.Time) (*db.Sample, error)
 }
 
 // Handler serves the REST API endpoints.
@@ -306,6 +307,7 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	untilStr := r.URL.Query().Get("until")
 	limitStr := r.URL.Query().Get("limit")
 	bucket := r.URL.Query().Get("bucket") // reserved for future use: "raw", "hour", "day"
+	deltaStr := r.URL.Query().Get("delta")
 
 	now := time.Now().UTC()
 
@@ -351,6 +353,26 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	// TODO: support bucket="hour" and bucket="day" using aggregate tables.
 	_ = bucket
 
+	// Query delta reference if requested.
+	var refSample *db.Sample
+	if deltaStr != "" {
+		deltaTime, err := time.Parse(time.RFC3339, deltaStr)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid delta format (use RFC3339)")
+			return
+		}
+		refSample, err = h.store.SampleAt(r.Context(), sensorName, deltaTime)
+		if err != nil {
+			slog.Warn("Failed to query delta reference", "sensor", sensorName, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "failed to query delta reference")
+			return
+		}
+		if refSample == nil || refSample.Value == nil {
+			writeJSONError(w, http.StatusBadRequest, "no sample found at delta timestamp")
+			return
+		}
+	}
+
 	samples, err := h.store.QueryRawSamples(r.Context(), sensorName, since, until, limit)
 	if err != nil {
 		slog.Warn("Failed to query samples", "sensor", sensorName, "error", err)
@@ -365,6 +387,16 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 	// Downsample to prevent sending too many data points to the dashboard.
 	const maxPoints = 2000
 	samples = downsample(samples, maxPoints)
+
+	// Adjust values by delta reference if requested.
+	if refSample != nil {
+		for i := range samples {
+			if samples[i].Value != nil {
+				adj := *samples[i].Value - *refSample.Value
+				samples[i].Value = &adj
+			}
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sensor":  sensorName,

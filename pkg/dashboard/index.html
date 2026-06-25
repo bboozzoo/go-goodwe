@@ -265,7 +265,13 @@ async function fetchLatest(sensor) {
 
 async function loadStatus() {
   try {
+    // Compute midnight today in UTC for cumulative delta queries.
+    const midnight = new Date();
+    midnight.setUTCHours(0, 0, 0, 0);
+
     // Fetch latest samples from DB for the system status section.
+    // Grid import/export use cumulative registers (e_total_imp/e_total_exp) with
+    // delta=midnight to compute today's energy, avoiding potentially buggy daily registers.
     const [grid, house, pv, battery, errors, pvToday, gridImpToday, gridExpToday, batDischargeToday, batChargeToday] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
@@ -273,8 +279,8 @@ async function loadStatus() {
       fetchLatest('battery_soc'),
       fetchLatest('errors'),
       fetchLatest('e_day'),
-      fetchLatest('e_day_imp'),
-      fetchLatest('e_day_exp'),
+      fetchJSON(`/api/data/e_total_imp/aggregate?delta=${midnight.toISOString()}&limit=1`).then(d => d.samples?.[0] || null),
+      fetchJSON(`/api/data/e_total_exp/aggregate?delta=${midnight.toISOString()}&limit=1`).then(d => d.samples?.[0] || null),
       fetchLatest('e_bat_discharge_day'),
       fetchLatest('e_bat_charge_day'),
     ]);
@@ -309,7 +315,7 @@ async function loadStatus() {
     document.getElementById('sys-load-today').textContent =
       loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
     document.getElementById('sys-load-today').title =
-      'e_day + e_day_imp - e_day_exp + e_bat_discharge_day - e_bat_charge_day';
+      'e_day + e_total_imp(delta) - e_total_exp(delta) + e_bat_discharge_day - e_bat_charge_day';
     document.getElementById('sys-grid-import').textContent =
       gridImpToday ? (gridImpToday.value != null ? gridImpToday.value + ' kWh' : gridImpToday.value_text || '-') : '-';
     document.getElementById('sys-grid-import').title = 'e_day_imp — daily import energy';

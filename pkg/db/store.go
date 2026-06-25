@@ -220,6 +220,24 @@ func (s *Store) LatestSample(ctx context.Context, name string) (*Sample, error) 
 	return &samp, nil
 }
 
+// SampleAt returns the sample closest to (but not after) the given timestamp.
+// Returns nil if no samples exist before or at the given time.
+func (s *Store) SampleAt(ctx context.Context, name string, at time.Time) (*Sample, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT value, value_text, unit, sampled_at FROM sensor_samples
+		 WHERE sensor_name = ? AND sampled_at <= ?
+		 ORDER BY sampled_at DESC LIMIT 1`, name, at)
+
+	var samp Sample
+	if err := row.Scan(&samp.Value, &samp.ValueText, &samp.Unit, &samp.SampledAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sample at: %w", err)
+	}
+	return &samp, nil
+}
+
 // PurgeBadSamples deletes sensor samples with physically impossible values.
 // ratedPower is the inverter's rated power in watts, used to cap power readings.
 func (s *Store) PurgeBadSamples(ctx context.Context, ratedPower int) error {

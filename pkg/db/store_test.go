@@ -341,6 +341,49 @@ func TestLatestSampleNoData(t *testing.T) {
 	assert.Nil(t, sample)
 }
 
+func TestSampleAt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// No samples yet.
+	sample, err := s.SampleAt(ctx, "battery_soc", now)
+	require.NoError(t, err)
+	assert.Nil(t, sample)
+
+	// Insert three samples.
+	_ = s.InsertSample(ctx, "battery_soc", "%", now.Add(-2*time.Hour), samplePtr(50), nil)
+	_ = s.InsertSample(ctx, "battery_soc", "%", now.Add(-1*time.Hour), samplePtr(55), nil)
+	_ = s.InsertSample(ctx, "battery_soc", "%", now, samplePtr(60), nil)
+
+	// Sample at a time before all samples → nil.
+	sample, err = s.SampleAt(ctx, "battery_soc", now.Add(-3*time.Hour))
+	require.NoError(t, err)
+	assert.Nil(t, sample)
+
+	// Sample between first and second → returns the first (closest <= at).
+	sample, err = s.SampleAt(ctx, "battery_soc", now.Add(-90*time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, sample)
+	require.NotNil(t, sample.Value)
+	assert.Equal(t, 50.0, *sample.Value)
+
+	// Sample exactly at second timestamp → returns the second.
+	sample, err = s.SampleAt(ctx, "battery_soc", now.Add(-1*time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, sample)
+	require.NotNil(t, sample.Value)
+	assert.Equal(t, 55.0, *sample.Value)
+
+	// Sample after all → returns the latest.
+	sample, err = s.SampleAt(ctx, "battery_soc", now.Add(time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, sample)
+	require.NotNil(t, sample.Value)
+	assert.Equal(t, 60.0, *sample.Value)
+}
+
 func TestStringValueRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
