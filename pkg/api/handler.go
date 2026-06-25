@@ -355,8 +355,9 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 
 	// Query delta reference if requested.
 	var refSample *db.Sample
+	var deltaTime time.Time
 	if deltaStr != "" {
-		deltaTime, err := time.Parse(time.RFC3339, deltaStr)
+		deltaTime, err = time.Parse(time.RFC3339, deltaStr)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid delta format (use RFC3339)")
 			return
@@ -398,10 +399,18 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"sensor":  sensorName,
 		"samples": samples,
-	})
+	}
+	if refSample != nil {
+		resp["delta"] = map[string]any{
+			"at":           deltaTime.Format(time.RFC3339),
+			"reference_at": refSample.SampledAt.Format(time.RFC3339),
+			"gap_seconds":  deltaTime.Sub(refSample.SampledAt).Seconds(),
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // inverterInfo is the JSON body for GET /api/info.

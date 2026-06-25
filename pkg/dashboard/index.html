@@ -101,6 +101,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .graph-card .graph-header .close-btn:hover { color: var(--color-fault); }
 .graph-card .graph-header .reset-zoom-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0.15rem 0.4rem; border-radius: 3px; margin-right: 0.4rem; } .graph-card .graph-header .reset-zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .graph-card canvas { width: 100% !important; max-height: 250px; }
+.card .value.approx { color: var(--color-off-grid); }
+.card .value .warn-icon { color: var(--color-off-grid); cursor: help; font-size: 0.85rem; margin-left: 0.25rem; }
 .empty-state { display: flex; align-items: center; justify-content: center; height: 100%;
                 color: var(--text-muted); font-size: 0.9rem; }
 .no-data-msg { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem; }
@@ -272,6 +274,21 @@ async function loadStatus() {
     // Fetch latest samples from DB for the system status section.
     // Grid import/export use cumulative registers (e_total_imp/e_total_exp) with
     // delta=midnight to compute today's energy, avoiding potentially buggy daily registers.
+    const GRID_IMPORT_SENSOR = 'e_total_imp';
+    const GRID_EXPORT_SENSOR = 'e_total_exp';
+    const GAP_WARN_SECONDS = 300; // 5 minutes — show warning if reference is older
+
+    // Track the accuracy of cumulative delta queries.
+    let deltaGapSeconds = 0;
+
+    const fetchDelta = (sensor, ts) => fetchJSON(`/api/data/${sensor}/aggregate?delta=${ts.toISOString()}&limit=1`)
+      .then(d => {
+        if (d.delta && d.delta.gap_seconds > deltaGapSeconds) {
+          deltaGapSeconds = d.delta.gap_seconds;
+        }
+        return d.samples?.[0] || null;
+      });
+
     const [grid, house, pv, battery, errors, pvToday, gridImpToday, gridExpToday, batDischargeToday, batChargeToday] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
@@ -279,8 +296,8 @@ async function loadStatus() {
       fetchLatest('battery_soc'),
       fetchLatest('errors'),
       fetchLatest('e_day'),
-      fetchJSON(`/api/data/e_total_imp/aggregate?delta=${midnight.toISOString()}&limit=1`).then(d => d.samples?.[0] || null),
-      fetchJSON(`/api/data/e_total_exp/aggregate?delta=${midnight.toISOString()}&limit=1`).then(d => d.samples?.[0] || null),
+      fetchDelta(GRID_IMPORT_SENSOR, midnight),
+      fetchDelta(GRID_EXPORT_SENSOR, midnight),
       fetchLatest('e_bat_discharge_day'),
       fetchLatest('e_bat_charge_day'),
     ]);
@@ -307,21 +324,34 @@ async function loadStatus() {
     document.getElementById('sys-pv-today').textContent =
       pvToday ? (pvToday.value != null ? pvToday.value + ' kWh' : pvToday.value_text || '-') : '-';
     document.getElementById('sys-pv-today').title = 'e_day — daily PV generation';
+    // Shared helper: format a cumulative-delta value with accuracy indicator.
+    const fmtDelta = (val, unit) => {
+      if (val == null) return '-';
+      const prefix = deltaGapSeconds > GAP_WARN_SECONDS ? '~' : '';
+      return prefix + val.toFixed(1) + ' ' + unit;
+    };
     // Daily house load = PV + grid_import - grid_export + battery_discharge - battery_charge
     const loadVal = pvToday && pvToday.value != null
       ? (pvToday.value + (gridImpToday?.value ?? 0) - (gridExpToday?.value ?? 0)
          + (batDischargeToday?.value ?? 0) - (batChargeToday?.value ?? 0))
       : null;
+    const loadApprox = deltaGapSeconds > GAP_WARN_SECONDS;
     document.getElementById('sys-load-today').textContent =
-      loadVal !== null ? loadVal.toFixed(1) + ' kWh' : '-';
+      loadVal !== null ? (loadApprox ? '~' : '') + loadVal.toFixed(1) + ' kWh' : '-';
+    document.getElementById('sys-load-today').className = 'value' + (loadApprox ? ' approx' : '');
     document.getElementById('sys-load-today').title =
-      'e_day + e_total_imp(delta) - e_total_exp(delta) + e_bat_discharge_day - e_bat_charge_day';
+      'e_day + e_total_imp(delta) - e_total_exp(delta) + e_bat_discharge_day - e_bat_charge_day' +
+      (deltaGapSeconds > GAP_WARN_SECONDS ? ' (approx, reference gap: ' + Math.round(deltaGapSeconds / 60) + ' min)' : '');
     document.getElementById('sys-grid-import').textContent =
-      gridImpToday ? (gridImpToday.value != null ? gridImpToday.value + ' kWh' : gridImpToday.value_text || '-') : '-';
-    document.getElementById('sys-grid-import').title = 'e_day_imp — daily import energy';
+      gridImpToday ? fmtDelta(gridImpToday.value, 'kWh') : '-';
+    document.getElementById('sys-grid-import').className = 'value' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' approx' : '');
+    document.getElementById('sys-grid-import').title =
+      'e_total_imp(delta)' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' (approx, reference gap: ' + Math.round(deltaGapSeconds / 60) + ' min)' : '');
     document.getElementById('sys-grid-export').textContent =
-      gridExpToday ? (gridExpToday.value != null ? gridExpToday.value + ' kWh' : gridExpToday.value_text || '-') : '-';
-    document.getElementById('sys-grid-export').title = 'e_day_exp — daily export energy';
+      gridExpToday ? fmtDelta(gridExpToday.value, 'kWh') : '-';
+    document.getElementById('sys-grid-export').className = 'value' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' approx' : '');
+    document.getElementById('sys-grid-export').title =
+      'e_total_exp(delta)' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' (approx, reference gap: ' + Math.round(deltaGapSeconds / 60) + ' min)' : '');
   } catch (e) {
     // status display is best-effort
   }

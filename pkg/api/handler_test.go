@@ -479,9 +479,12 @@ func TestAggregate_DeltaAdjustsValue(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	refVal := 1000.0
 	curVal := 1042.5
+	// Reference sample at T-12h; delta requested at T-12h+30s → 30s gap
+	refTime := now.Add(-12 * time.Hour)
+	deltaTime := refTime.Add(30 * time.Second)
 	ss := &mockSensorStore{
 		onSampleAt: func(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
-			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: now.Add(-12 * time.Hour)}, nil
+			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: refTime}, nil
 		},
 		onQuerySamples: func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error) {
 			return []db.Sample{
@@ -491,7 +494,7 @@ func TestAggregate_DeltaAdjustsValue(t *testing.T) {
 	}
 	h := newHandler(&mockInverter{}, nil, ss)
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=2026-01-01T00:00:00Z&limit=1", nil)
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta="+deltaTime.Format(time.RFC3339)+"&limit=1", nil)
 	h.ServeHTTP(rr, req)
 
 	assert.Equal(t, 200, rr.Code)
@@ -502,14 +505,22 @@ func TestAggregate_DeltaAdjustsValue(t *testing.T) {
 	s := samples[0].(map[string]any)
 	// curVal - refVal = 1042.5 - 1000.0 = 42.5
 	assert.Equal(t, 42.5, s["value"])
+	// Check delta metadata
+	delta, ok := body["delta"].(map[string]any)
+	require.True(t, ok, "delta metadata should be present")
+	assert.Equal(t, deltaTime.Format(time.RFC3339), delta["at"])
+	assert.Equal(t, refTime.Format(time.RFC3339), delta["reference_at"])
+	assert.InDelta(t, 30.0, delta["gap_seconds"], 1.0)
 }
 
 func TestAggregate_DeltaAdjustsMultipleSamples(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	refVal := 1000.0
+	refTime := now.Add(-24 * time.Hour)
+	deltaTime := refTime.Add(30 * time.Second)
 	ss := &mockSensorStore{
 		onSampleAt: func(ctx context.Context, name string, at time.Time) (*db.Sample, error) {
-			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: now.Add(-24 * time.Hour)}, nil
+			return &db.Sample{Value: &refVal, Unit: "kWh", SampledAt: refTime}, nil
 		},
 		onQuerySamples: func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error) {
 			v1, v2, v3 := 1005.0, 1010.0, 1015.0
@@ -522,7 +533,7 @@ func TestAggregate_DeltaAdjustsMultipleSamples(t *testing.T) {
 	}
 	h := newHandler(&mockInverter{}, nil, ss)
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta=2026-01-01T00:00:00Z&limit=3", nil)
+	req := httptest.NewRequest("GET", "/api/data/e_total_exp/aggregate?delta="+deltaTime.Format(time.RFC3339)+"&limit=3", nil)
 	h.ServeHTTP(rr, req)
 
 	assert.Equal(t, 200, rr.Code)
@@ -535,6 +546,12 @@ func TestAggregate_DeltaAdjustsMultipleSamples(t *testing.T) {
 	assert.Equal(t, 5.0, s0["value"])  // 1005 - 1000
 	assert.Equal(t, 10.0, s1["value"]) // 1010 - 1000
 	assert.Equal(t, 15.0, s2["value"]) // 1015 - 1000
+	// Check delta metadata
+	delta, ok := body["delta"].(map[string]any)
+	require.True(t, ok, "delta metadata should be present")
+	assert.Equal(t, deltaTime.Format(time.RFC3339), delta["at"])
+	assert.Equal(t, refTime.Format(time.RFC3339), delta["reference_at"])
+	assert.InDelta(t, 30.0, delta["gap_seconds"], 1.0)
 }
 
 // ---- redirect ----
