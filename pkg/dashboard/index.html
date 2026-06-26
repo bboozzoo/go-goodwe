@@ -65,6 +65,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .system-grid .card .value.off-grid { color: var(--color-off-grid); }
 .system-grid .card .value.fault { color: var(--color-fault); }
 .system-grid .separator { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
+.view-nav { display: flex; gap: 0.25rem; padding: 0.6rem 1.5rem; background: var(--bg-surface); border-bottom: 1px solid var(--border); align-items: center; }
+.view-nav label { font-size: 0.75rem; color: var(--text-muted); margin-right: 0.5rem; }
+.view-nav .pill { padding: 0.35rem 0.75rem; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-secondary); border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
+.view-nav .pill:hover { background: var(--bg-hover, #334155); color: var(--text-primary); }
+.view-nav .pill.active { background: var(--text-accent); color: #0f172a; border-color: var(--text-accent); font-weight: 600; }
+.view { display: none; }
+.view.active { display: block; }
 .layout { display: flex; gap: 0; height: calc(100vh - 200px); }
 .sensor-list { width: 280px; min-width: 280px; overflow-y: auto; background: var(--bg-surface);
                border-right: 1px solid var(--border); padding: 0.5rem; }
@@ -153,6 +160,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="card"><div class="label">⬆ Grid Export</div><div class="value" id="sys-grid-export">-</div></div>
 </div>
 
+<div class="view-nav">
+  <label>View:</label>
+  <div class="pill active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</div>
+  <div class="pill" data-view="voltage" onclick="switchView('voltage')">⚡ Grid Voltage</div>
+</div>
+
+<div id="view-dashboard" class="view active">
 <div class="layout">
   <div class="sensor-list" id="sensor-list">
     <div class="filter-wrap">
@@ -175,6 +189,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     </div>
     <div id="graphs-container">
       <div class="empty-state">Select a sensor from the left panel to view its data</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- Grid Voltage view -->
+<div id="view-voltage" class="view">
+  <div class="voltage-view" style="padding:1rem 1.5rem">
+    <div class="voltage-header" style="display:flex;gap:1rem;align-items:baseline;margin-bottom:1rem;flex-wrap:wrap">
+      <h2 style="font-size:1rem;font-weight:600;color:var(--text-accent);margin:0">Grid Voltage Quality</h2>
+      <span style="font-size:0.75rem;color:var(--text-muted)">IEC 60038: 207V — 253V</span>
+      <span id="voltage-last-run" style="font-size:0.75rem;color:var(--text-muted);margin-left:auto"></span>
+    </div>
+    <div id="voltage-events-container">
+      <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Phase</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Start</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">End</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Duration</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Min</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Max</th>
+            <th style="text-align:left;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.7rem;text-transform:uppercase">Avg</th>
+          </tr>
+        </thead>
+        <tbody id="voltage-events-body"></tbody>
+      </table>
+      <div id="voltage-loading" style="display:none;text-align:center;padding:1rem;color:var(--text-muted);font-size:0.85rem">Loading...</div>
+      <div id="voltage-empty" style="display:none;text-align:center;padding:3rem;color:var(--text-muted);font-size:0.85rem">No voltage events detected.</div>
     </div>
   </div>
 </div>
@@ -706,6 +750,79 @@ document.addEventListener('DOMContentLoaded', () => {
   // Periodic status refresh (every 30s)
   setInterval(() => { loadInfo(); loadStatus(); }, 30000);
 });
+// ---- Grid Voltage View ----
+let voltageCursor = 0;
+let voltageHasMore = true;
+let voltageLoading = false;
+
+function formatDuration(sec) {
+  if (sec < 60) return sec + ' s';
+  if (sec < 3600) return Math.floor(sec / 60) + ' min ' + (sec % 60) + ' s';
+  return Math.floor(sec / 3600) + ' h ' + Math.floor((sec % 3600) / 60) + ' min';
+}
+
+async function loadVoltageEvents() {
+  if (voltageLoading || !voltageHasMore) return;
+  voltageLoading = true;
+  document.getElementById('voltage-loading').style.display = 'block';
+
+  try {
+    const params = new URLSearchParams({ limit: '20' });
+    if (voltageCursor > 0) params.set('before', voltageCursor);
+
+    const data = await fetchJSON('/api/analysis/grid_voltage?' + params);
+    const events = data.events || [];
+    const curs = data.cursor || {};
+    const analysis = data.analysis || {};
+
+    if (analysis.last_run_at) {
+      document.getElementById('voltage-last-run').textContent =
+        'Last analyzed: ' + new Date(analysis.last_run_at).toLocaleString();
+    }
+
+    if (events.length === 0 && voltageCursor === 0) {
+      document.getElementById('voltage-empty').style.display = 'block';
+      document.getElementById('voltage-loading').style.display = 'none';
+      voltageLoading = false;
+      return;
+    }
+    document.getElementById('voltage-empty').style.display = 'none';
+
+    const tbody = document.getElementById('voltage-events-body');
+    for (const e of events) {
+      const tr = document.createElement('tr');
+      const startTime = new Date(e.start_time).toLocaleString();
+      const endTime = e.end_time ? new Date(e.end_time).toLocaleString() : 'ongoing';
+      const dur = e.duration_seconds != null ? formatDuration(e.duration_seconds) : 'ongoing';
+      tr.innerHTML =
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-secondary)">' + e.phase.replace('meter_voltage', 'L') + '</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-secondary)">' + startTime + '</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-secondary)">' + endTime + '</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-secondary)">' + dur + '</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--color-fault,#f87171)">' + e.min_voltage.toFixed(1) + ' V</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--color-warning,#fbbf24)">' + e.max_voltage.toFixed(1) + ' V</td>' +
+        '<td style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);color:var(--text-secondary)">' + e.avg_voltage.toFixed(1) + ' V</td>';
+      tbody.appendChild(tr);
+    }
+
+    voltageCursor = curs.next || 0;
+    voltageHasMore = curs.has_more || false;
+  } catch (e) {
+    console.warn('Failed to load voltage events', e);
+  }
+
+  document.getElementById('voltage-loading').style.display = 'none';
+  voltageLoading = false;
+}
+
+function switchView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.querySelector('.pill[data-view="' + name + '"]').classList.add('active');
+  if (name === 'voltage') loadVoltageEvents();
+}
+
 // ---- Theme toggle ----
 function getTheme() {
   return localStorage.getItem('theme') || 'light';
