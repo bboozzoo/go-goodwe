@@ -94,11 +94,13 @@ func (m *mockDaemonStatus) ConnError() error                 { return m.connErr 
 func (m *mockDaemonStatus) VerificationError() error         { return m.verificationErr }
 
 type mockSensorStore struct {
-	onGetIdentity  func(ctx context.Context) (*db.InverterIdentity, error)
-	onQuerySamples func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
-	onLatestSample func(ctx context.Context, name string) (*db.Sample, error)
-	onLastTime     func(ctx context.Context) (*time.Time, error)
-	onSampleAt     func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
+	onGetIdentity              func(ctx context.Context) (*db.InverterIdentity, error)
+	onQuerySamples            func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
+	onLatestSample            func(ctx context.Context, name string) (*db.Sample, error)
+	onLastTime                func(ctx context.Context) (*time.Time, error)
+	onSampleAt                func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
+	onQueryVoltageEvents      func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
+	onGetVoltageAnalysisCursor func(ctx context.Context) (*db.VoltageAnalysisCursor, error)
 }
 
 func (m *mockSensorStore) GetInverterIdentity(ctx context.Context) (*db.InverterIdentity, error) {
@@ -131,11 +133,23 @@ func (m *mockSensorStore) SampleAt(ctx context.Context, name string, at time.Tim
 	}
 	return nil, nil
 }
+func (m *mockSensorStore) QueryVoltageEvents(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error) {
+	if m.onQueryVoltageEvents != nil {
+		return m.onQueryVoltageEvents(ctx, before, limit)
+	}
+	return nil, 0, nil
+}
+func (m *mockSensorStore) GetVoltageAnalysisCursor(ctx context.Context) (*db.VoltageAnalysisCursor, error) {
+	if m.onGetVoltageAnalysisCursor != nil {
+		return m.onGetVoltageAnalysisCursor(ctx)
+	}
+	return nil, nil
+}
 
 // ---- helpers ----
 
 func newHandler(inv goodwe.Inverter, ds DaemonStatus, ss SensorStore) *Handler {
-	return New(inv, ds, ss, "10.0.0.1", "test-version", false)
+	return New(inv, ds, ss, "10.0.0.1", "test-version", false, nil)
 }
 
 func getBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
@@ -234,7 +248,7 @@ func TestHealth_VerificationError(t *testing.T) {
 }
 
 func TestHealth_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false)
+	h := New(nil, nil, nil, "", "", false, nil)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/health", nil)
 	h.ServeHTTP(rr, req)
@@ -282,7 +296,7 @@ func TestInfo_FromDB(t *testing.T) {
 }
 
 func TestInfo_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false)
+	h := New(nil, nil, nil, "", "", false, nil)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/info", nil)
 	h.ServeHTTP(rr, req)
@@ -380,7 +394,7 @@ func TestGetData_UnknownSensor(t *testing.T) {
 }
 
 func TestGetData_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false)
+	h := New(nil, nil, nil, "", "", false, nil)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/data/battery_soc", nil)
 	h.ServeHTTP(rr, req)
@@ -703,6 +717,136 @@ func TestDownsample_ReturnsAtMostMax(t *testing.T) {
 		result := downsample(samples, 1)
 		assert.Equal(t, samples, result)
 	})
+}
+
+func TestGridVoltage_NoStore(t *testing.T) {
+	h := New(nil, nil, nil, "", "", false, nil)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 501, rr.Code)
+}
+
+func TestGridVoltage_Empty(t *testing.T) {
+	ss := &mockSensorStore{}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=20", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	events := body["events"].([]any)
+	assert.Empty(t, events)
+	cursor := body["cursor"].(map[string]any)
+	assert.Equal(t, false, cursor["has_more"])
+}
+
+func TestGridVoltage_FirstPage(t *testing.T) {
+	ss := &mockSensorStore{
+		onQueryVoltageEvents: func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error) {
+			var events []db.VoltageEvent
+			for i := int64(30); i > 10; i-- {
+				minV := 200.0
+				dur := 120
+				now := time.Now().UTC()
+				end := now.Add(-time.Duration(i) * time.Minute)
+				start := end.Add(-2 * time.Hour)
+				events = append(events, db.VoltageEvent{
+					ID: i, Phase: "meter_voltage1",
+					StartTime: start, EndTime: &end,
+					MinVoltage: minV, MaxVoltage: 200.0, AvgVoltage: 200.0,
+					DurationSeconds: &dur,
+				})
+			}
+			return events[:limit], 30, nil
+		},
+		onGetVoltageAnalysisCursor: func(ctx context.Context) (*db.VoltageAnalysisCursor, error) {
+			return &db.VoltageAnalysisCursor{LastRunAt: time.Now().UTC()}, nil
+		},
+	}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=20", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	events := body["events"].([]any)
+	assert.Len(t, events, 20)
+	cursor := body["cursor"].(map[string]any)
+	assert.Equal(t, true, cursor["has_more"])
+	assert.NotZero(t, cursor["next"])
+}
+
+func TestGridVoltage_SecondPage(t *testing.T) {
+	ss := &mockSensorStore{
+		onQueryVoltageEvents: func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error) {
+			var events []db.VoltageEvent
+			for i := int64(10); i > 0; i-- {
+				minV := 200.0
+				dur := 120
+				now := time.Now().UTC()
+				end := now.Add(-time.Duration(i) * time.Minute)
+				start := end.Add(-2 * time.Hour)
+				events = append(events, db.VoltageEvent{
+					ID: i, Phase: "meter_voltage1",
+					StartTime: start, EndTime: &end,
+					MinVoltage: minV, MaxVoltage: 200.0, AvgVoltage: 200.0,
+					DurationSeconds: &dur,
+				})
+			}
+			return events, 30, nil
+		},
+	}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?before=10&limit=20", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	events := body["events"].([]any)
+	assert.Len(t, events, 10)
+	cursor := body["cursor"].(map[string]any)
+	assert.Equal(t, false, cursor["has_more"])
+}
+
+func TestGridVoltage_InvalidLimit(t *testing.T) {
+	ss := &mockSensorStore{}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=200", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 400, rr.Code)
+	body := getBody(t, rr)
+	assert.Contains(t, body["error"], "limit")
+}
+
+func TestGridVoltage_InvalidBefore(t *testing.T) {
+	ss := &mockSensorStore{}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?before=-1", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 400, rr.Code)
+	body := getBody(t, rr)
+	assert.Contains(t, body["error"], "before")
+}
+
+func TestGridVoltage_AnalysisMetadata(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	ss := &mockSensorStore{
+		onGetVoltageAnalysisCursor: func(ctx context.Context) (*db.VoltageAnalysisCursor, error) {
+			return &db.VoltageAnalysisCursor{LastRunAt: now}, nil
+		},
+	}
+	h := New(nil, nil, ss, "", "", false, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=1", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	an := body["analysis"].(map[string]any)
+	lastRun := an["last_run_at"].(string)
+	assert.Contains(t, lastRun, now.Format("2006-01-02"))
 }
 
 // makeSamples creates n samples with sequential float64 values (0..n-1).

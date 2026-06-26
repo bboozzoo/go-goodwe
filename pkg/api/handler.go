@@ -89,11 +89,18 @@ type SensorStore interface {
 	SampleAt(ctx context.Context, name string, at time.Time) (*db.Sample, error)
 }
 
+// VoltageAnalysisStore is the interface for querying voltage event analysis results.
+type VoltageAnalysisStore interface {
+	QueryVoltageEvents(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
+	GetVoltageAnalysisCursor(ctx context.Context) (*db.VoltageAnalysisCursor, error)
+}
+
 // Handler serves the REST API endpoints.
 type Handler struct {
 	inverter      goodwe.Inverter // may be nil when no inverter is configured
 	daemon        DaemonStatus    // may be nil
-	store         SensorStore     // may be nil; aggregate endpoint returns 501
+	store         SensorStore          // may be nil; aggregate endpoint returns 501
+	analysisStore VoltageAnalysisStore // may be nil; analysis endpoint returns 501
 	inverterIP    string          // IP address of the inverter, for display
 	daemonVersion string          // daemon build version (set at construction)
 	debug         bool
@@ -102,8 +109,8 @@ type Handler struct {
 
 // New creates an API handler. inverter, daemonStatus, and sensorStore may
 // be nil; endpoints return appropriate error codes when dependencies are missing.
-func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, daemonVersion string, debug bool) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, inverterIP: inverterIP, daemonVersion: daemonVersion, debug: debug}
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, daemonVersion string, debug bool, voltageAnalysisStore VoltageAnalysisStore) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, analysisStore: voltageAnalysisStore, inverterIP: inverterIP, daemonVersion: daemonVersion, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -120,6 +127,7 @@ func (h *Handler) buildRoutes() http.Handler {
 	mux.HandleFunc("GET /api/data/{sensor}", h.handleGetData)
 	mux.HandleFunc("GET /api/data/{sensor}/aggregate", h.handleGetAggregate)
 	mux.HandleFunc("GET /api/info", h.handleInfo)
+	mux.HandleFunc("GET /api/analysis/grid_voltage", h.handleGridVoltage)
 	mux.HandleFunc("GET /api/", h.handleNotFound)
 	mux.HandleFunc("GET /dashboard", h.handleDashboard)
 	mux.HandleFunc("GET /", h.handleRootRedirect)
@@ -414,6 +422,63 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 }
 
 // inverterInfo is the JSON body for GET /api/info.
+func (h *Handler) handleGridVoltage(w http.ResponseWriter, r *http.Request) {
+	if h.analysisStore == nil {
+		writeJSONError(w, http.StatusNotImplemented, "analysis store not available")
+		return
+	}
+	beforeStr := r.URL.Query().Get("before")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 100 {
+			limit = n
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "invalid limit (must be 1-100)")
+			return
+		}
+	}
+	var before int64
+	if beforeStr != "" {
+		var err error
+		before, err = strconv.ParseInt(beforeStr, 10, 64)
+		if err != nil || before < 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid before cursor")
+			return
+		}
+	}
+	events, total, err := h.analysisStore.QueryVoltageEvents(r.Context(), before, limit)
+	if events == nil {
+		events = []db.VoltageEvent{}
+	}
+	if err != nil {
+		slog.Warn("Failed to query voltage events", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to query events")
+		return
+	}
+	hasMore := len(events) >= limit
+	var nextCursor int64
+	if len(events) > 0 {
+		nextCursor = events[len(events)-1].ID
+	}
+	var lastRunAt *time.Time
+	if cursor, err := h.analysisStore.GetVoltageAnalysisCursor(r.Context()); err == nil && cursor != nil {
+		lastRunAt = &cursor.LastRunAt
+	}
+	resp := map[string]any{
+		"events":       events,
+		"total_events": total,
+		"cursor": map[string]any{
+			"next":     nextCursor,
+			"has_more": hasMore,
+		},
+		"analysis": map[string]any{
+			"last_run_at": lastRunAt,
+		},
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 type inverterInfo struct {
 	Serial        string  `json:"serial"`
 	Model         string  `json:"model"`
