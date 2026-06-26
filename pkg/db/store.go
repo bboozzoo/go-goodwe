@@ -59,6 +59,30 @@ type Sample struct {
 	SampledAt time.Time `json:"sampled_at"`
 }
 
+
+// VoltageAnalysisCursor tracks the progress of voltage quality analysis.
+type VoltageAnalysisCursor struct {
+	ID               int64
+	LastProcessedNano int64
+	OngoingL1EventID *int64
+	OngoingL2EventID *int64
+	OngoingL3EventID *int64
+	LastRunAt        time.Time
+}
+
+// VoltageEvent represents a detected voltage quality event (out-of-range).
+type VoltageEvent struct {
+	ID              int64      `json:"id"`
+	Phase           string     `json:"phase"`
+	StartSampleID   int64      `json:"-"`
+	StartTime       time.Time  `json:"start_time"`
+	EndSampleID     *int64     `json:"-"`
+	EndTime         *time.Time `json:"end_time,omitempty"`
+	MinVoltage      float64    `json:"min_voltage"`
+	MaxVoltage      float64    `json:"max_voltage"`
+	AvgVoltage      float64    `json:"avg_voltage"`
+	DurationSeconds *int       `json:"duration_seconds,omitempty"`
+}
 // Store provides access to the SQLite database.
 type Store struct {
 	db *sql.DB
@@ -240,6 +264,116 @@ func (s *Store) SampleAt(ctx context.Context, name string, at time.Time) (*Sampl
 
 // PurgeBadSamples deletes sensor samples with physically impossible values.
 // ratedPower is the inverter's rated power in watts, used to cap power readings.
+
+func (s *Store) GetVoltageAnalysisCursor(ctx context.Context) (*VoltageAnalysisCursor, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, last_processed_nano, ongoing_l1_event_id, ongoing_l2_event_id,
+		       ongoing_l3_event_id, last_run_at FROM voltage_analysis_cursor WHERE id = 1`)
+	var c VoltageAnalysisCursor
+	if err := row.Scan(&c.ID, &c.LastProcessedNano, &c.OngoingL1EventID,
+		&c.OngoingL2EventID, &c.OngoingL3EventID, &c.LastRunAt); err != nil {
+		return nil, fmt.Errorf("get voltage cursor: %w", err)
+	}
+	return &c, nil
+}
+
+func (s *Store) SaveVoltageAnalysisCursor(ctx context.Context, c *VoltageAnalysisCursor) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE voltage_analysis_cursor SET
+			last_processed_nano = ?, ongoing_l1_event_id = ?, ongoing_l2_event_id = ?,
+			ongoing_l3_event_id = ?, last_run_at = ? WHERE id = 1`,
+		c.LastProcessedNano, c.OngoingL1EventID, c.OngoingL2EventID,
+		c.OngoingL3EventID, c.LastRunAt)
+	if err != nil {
+		return fmt.Errorf("save voltage cursor: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) InsertVoltageEvent(ctx context.Context, phase string, startSampleID int64, startTime time.Time, minV, maxV, avgV float64) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO voltage_events (phase, start_sample_id, start_time, min_voltage, max_voltage, avg_voltage)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		phase, startSampleID, startTime, minV, maxV, avgV)
+	if err != nil {
+		return 0, fmt.Errorf("insert voltage event: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) CloseVoltageEvent(ctx context.Context, eventID int64, endSampleID int64, endTime time.Time, durationSec int) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE voltage_events SET end_sample_id = ?, end_time = ?, duration_seconds = ? WHERE id = ?`,
+		endSampleID, endTime, durationSec, eventID)
+	if err != nil {
+		return fmt.Errorf("close voltage event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateVoltageEvent(ctx context.Context, eventID int64, minV, maxV, avgV float64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE voltage_events SET min_voltage = ?, max_voltage = ?, avg_voltage = ? WHERE id = ?`,
+		minV, maxV, avgV, eventID)
+	if err != nil {
+		return fmt.Errorf("update voltage event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) QueryVoltageEvents(ctx context.Context, before int64, limit int) ([]VoltageEvent, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM voltage_events`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count voltage events: %w", err)
+	}
+	var rows *sql.Rows
+	var err error
+	if before > 0 {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, phase, start_sample_id, start_time, end_sample_id, end_time,
+			       min_voltage, max_voltage, avg_voltage, duration_seconds
+			FROM voltage_events WHERE id < ? ORDER BY id DESC LIMIT ?`, before, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, phase, start_sample_id, start_time, end_sample_id, end_time,
+			       min_voltage, max_voltage, avg_voltage, duration_seconds
+			FROM voltage_events ORDER BY id DESC LIMIT ?`, limit)
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("query voltage events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var events []VoltageEvent
+	for rows.Next() {
+		var e VoltageEvent
+		if err := rows.Scan(&e.ID, &e.Phase, &e.StartSampleID, &e.StartTime,
+			&e.EndSampleID, &e.EndTime, &e.MinVoltage, &e.MaxVoltage, &e.AvgVoltage, &e.DurationSeconds); err != nil {
+			return nil, 0, fmt.Errorf("scan voltage event: %w", err)
+		}
+		events = append(events, e)
+	}
+	return events, total, rows.Err()
+}
+
+func (s *Store) GetNewVoltageSamplesForSensor(ctx context.Context, sensorName string, sinceNano int64) ([]Sample, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT value, value_text, unit, sampled_at FROM sensor_samples
+		WHERE sensor_name = ? AND sampled_at > ? ORDER BY sampled_at ASC`,
+		sensorName, time.Unix(0, sinceNano))
+	if err != nil {
+		return nil, fmt.Errorf("query voltage samples: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var samples []Sample
+	for rows.Next() {
+		var s Sample
+		if err := rows.Scan(&s.Value, &s.ValueText, &s.Unit, &s.SampledAt); err != nil {
+			return nil, fmt.Errorf("scan sample: %w", err)
+		}
+		samples = append(samples, s)
+	}
+	return samples, rows.Err()
+}
 func (s *Store) PurgeBadSamples(ctx context.Context, ratedPower int) error {
 	if ratedPower <= 0 {
 		ratedPower = 15000 // conservative default for unknown inverters
@@ -281,6 +415,32 @@ func migrate(db *sql.DB) error {
 			sampled_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_samples_name_time ON sensor_samples(sensor_name, sampled_at);
+	`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS voltage_analysis_cursor (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_processed_nano INTEGER NOT NULL DEFAULT 0,
+			ongoing_l1_event_id INTEGER,
+			ongoing_l2_event_id INTEGER,
+			ongoing_l3_event_id INTEGER,
+			last_run_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00'
+		);
+		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_nano, last_run_at) VALUES (1, 0, '1970-01-01 00:00:00');
+		CREATE TABLE IF NOT EXISTS voltage_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			phase TEXT NOT NULL,
+			start_sample_id INTEGER NOT NULL DEFAULT 0,
+			start_time TIMESTAMP NOT NULL,
+			end_sample_id INTEGER,
+			end_time TIMESTAMP,
+			min_voltage REAL NOT NULL,
+			max_voltage REAL NOT NULL,
+			avg_voltage REAL NOT NULL,
+			duration_seconds INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS idx_voltage_events_phase_start ON voltage_events(phase, start_time DESC);
 	`); err != nil {
 		return err
 	}
