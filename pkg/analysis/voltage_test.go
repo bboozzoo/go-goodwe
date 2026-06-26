@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/bboozzoo/go-goodwe/pkg/db"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockStore implements VoltageStore in memory for testing.
@@ -96,8 +98,6 @@ func (m *mockStore) GetNewVoltageSamplesForSensor(_ context.Context, sensorName 
 	return result, nil
 }
 
-// helpers
-
 // makeSamplesAt creates samples with given values, starting from base time, spaced by step.
 func makeSamplesAt(base time.Time, step time.Duration, vals ...float64) []db.Sample {
 	samples := make([]db.Sample, len(vals))
@@ -116,12 +116,9 @@ func TestNoEvents(t *testing.T) {
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 231, 229, 230, 232)},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 0 {
-		t.Fatalf("expected 0 events, got %d", len(store.events))
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	assert.Empty(t, store.events)
 }
 
 func TestSingleEvent(t *testing.T) {
@@ -130,25 +127,16 @@ func TestSingleEvent(t *testing.T) {
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200, 200, 230)},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(store.events))
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 1)
+
 	e := store.events[0]
-	if e.MinVoltage != 200.0 {
-		t.Fatalf("expected min 200.0, got %f", e.MinVoltage)
-	}
-	if e.MaxVoltage != 200.0 {
-		t.Fatalf("expected max 200.0, got %f", e.MaxVoltage)
-	}
-	if e.DurationSeconds == nil || *e.DurationSeconds < 100 {
-		t.Fatalf("expected duration > 100s, got %v", e.DurationSeconds)
-	}
-	if e.EndTime == nil {
-		t.Fatal("expected event to be closed")
-	}
+	assert.Equal(t, 200.0, e.MinVoltage)
+	assert.Equal(t, 200.0, e.MaxVoltage)
+	require.NotNil(t, e.DurationSeconds)
+	assert.Greater(t, *e.DurationSeconds, 100)
+	require.NotNil(t, e.EndTime, "expected event to be closed")
 }
 
 func TestMultipleEvents(t *testing.T) {
@@ -157,18 +145,11 @@ func TestMultipleEvents(t *testing.T) {
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200, 230, 260, 260, 230)},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(store.events))
-	}
-	if store.events[0].MinVoltage != 200.0 {
-		t.Fatalf("event 0: expected min 200.0, got %f", store.events[0].MinVoltage)
-	}
-	if store.events[1].MinVoltage != 260.0 {
-		t.Fatalf("event 1: expected min 260.0, got %f", store.events[1].MinVoltage)
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 2)
+	assert.Equal(t, 200.0, store.events[0].MinVoltage, "event 0 min")
+	assert.Equal(t, 260.0, store.events[1].MinVoltage, "event 1 min")
 }
 
 func TestBoundaryInclusive(t *testing.T) {
@@ -177,50 +158,32 @@ func TestBoundaryInclusive(t *testing.T) {
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 207.0, 253.0, 230, 207.0)},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 0 {
-		t.Fatalf("expected 0 events for boundary values, got %d", len(store.events))
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	assert.Empty(t, store.events, "boundary values should not trigger events")
 }
 
 func TestOngoingResume(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 
-	// Event starting in first run, completing in second run.
 	store := &mockStore{
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200)},
 	}
-	// First run: voltage goes out of range but never comes back → ongoing event.
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("expected 1 event after first run, got %d", len(store.events))
-	}
-	if store.cursor.OngoingL1EventID == nil {
-		t.Fatal("OngoingL1EventID should be set")
-	}
-	if store.events[0].EndTime != nil {
-		t.Fatal("expected event to be ongoing (no EndTime)")
-	}
+	// First run: voltage goes out of range but never comes back.
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 1)
+	require.NotNil(t, store.cursor.OngoingL1EventID, "OngoingL1EventID should be set")
+	assert.Nil(t, store.events[0].EndTime, "event should be ongoing (no EndTime)")
 
 	// Second run: more out-of-range samples at later timestamps, then back in range.
 	store.samples["meter_voltage1"] = makeSamplesAt(base.Add(5*time.Minute), time.Minute, 200, 200, 230)
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("expected 1 event after second run, got %d", len(store.events))
-	}
-	if store.events[0].EndTime == nil {
-		t.Fatal("expected event to be closed after second run")
-	}
-	if store.events[0].MinVoltage != 200.0 {
-		t.Fatalf("expected min 200.0, got %f", store.events[0].MinVoltage)
-	}
+	err = RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 1)
+	require.NotNil(t, store.events[0].EndTime, "event should be closed after second run")
+	assert.Equal(t, 200.0, store.events[0].MinVoltage)
 }
 
 func TestMultiplePhases(t *testing.T) {
@@ -232,15 +195,10 @@ func TestMultiplePhases(t *testing.T) {
 			"meter_voltage2": makeSamplesAt(base, time.Minute, 230, 230, 230),
 		},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("expected 1 event (L1), got %d", len(store.events))
-	}
-	if store.events[0].Phase != "meter_voltage1" {
-		t.Fatalf("expected event on meter_voltage1, got %s", store.events[0].Phase)
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 1)
+	assert.Equal(t, "meter_voltage1", store.events[0].Phase)
 }
 
 func TestAllOutOfRange(t *testing.T) {
@@ -249,18 +207,11 @@ func TestAllOutOfRange(t *testing.T) {
 		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 200, 200, 200)},
 	}
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(store.events))
-	}
-	if store.events[0].EndTime != nil {
-		t.Fatal("expected event to be ongoing (no EndTime)")
-	}
-	if store.cursor.OngoingL1EventID == nil {
-		t.Fatal("expected OngoingL1EventID to be set")
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	require.Len(t, store.events, 1)
+	assert.Nil(t, store.events[0].EndTime, "expected event to be ongoing (no EndTime)")
+	require.NotNil(t, store.cursor.OngoingL1EventID, "OngoingL1EventID should be set")
 }
 
 func TestEmptyData(t *testing.T) {
@@ -270,13 +221,8 @@ func TestEmptyData(t *testing.T) {
 		samples: map[string][]db.Sample{},
 	}
 	cursorBefore := store.cursor.LastProcessedNano
-	if err := RunVoltageAnalysis(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.events) != 0 {
-		t.Fatalf("expected 0 events, got %d", len(store.events))
-	}
-	if store.cursor.LastProcessedNano != cursorBefore {
-		t.Fatal("expected cursor to be unchanged")
-	}
+	err := RunVoltageAnalysis(context.Background(), store)
+	require.NoError(t, err)
+	assert.Empty(t, store.events)
+	assert.Equal(t, cursorBefore, store.cursor.LastProcessedNano, "cursor should be unchanged")
 }
