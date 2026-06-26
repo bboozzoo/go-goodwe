@@ -36,6 +36,7 @@ import (
 
 	"github.com/bboozzoo/go-goodwe"
 	"github.com/bboozzoo/go-goodwe/discovery"
+	"github.com/bboozzoo/go-goodwe/pkg/analysis"
 	"github.com/bboozzoo/go-goodwe/pkg/api"
 	"github.com/bboozzoo/go-goodwe/pkg/db"
 )
@@ -256,6 +257,13 @@ func (d *Daemon) doPoll(ctx context.Context) {
 			continue
 		}
 		stored++
+	}
+
+	// Run voltage analysis on newly stored samples.
+	if d.store != nil {
+		if err := analysis.RunVoltageAnalysis(ctx, d.store); err != nil {
+			slog.Warn("Voltage analysis failed", "error", err)
+		}
 	}
 
 	slog.Info("Poll cycle complete", "sensors_read", len(sensors), "stored", stored)

@@ -42,6 +42,7 @@ import (
 
 	"github.com/bboozzoo/go-goodwe"
 	"github.com/bboozzoo/go-goodwe/discovery"
+	"github.com/bboozzoo/go-goodwe/pkg/analysis"
 	"github.com/bboozzoo/go-goodwe/pkg/api"
 	"github.com/bboozzoo/go-goodwe/pkg/daemon"
 	"github.com/bboozzoo/go-goodwe/pkg/db"
@@ -78,6 +79,7 @@ func main() {
 	inverterIP := flag.String("inverterip", "", "IP address of the GoodWe inverter")
 	purgeDate := flag.String("purge", "", "One-shot: purge all data older than this date and exit (e.g. 2026-01-01)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
+	offlineAnalyze := flag.Bool("offline-analyze-voltage", false, "Run voltage analysis on the DB once and exit")
 	showVersion := flag.Bool("version", false, "Display version information and exit")
 	flag.Parse()
 
@@ -116,6 +118,22 @@ func main() {
 	if err != nil {
 		slog.Error("Failed to open database", "error", err)
 		os.Exit(1)
+	}
+
+	if *offlineAnalyze {
+		slog.Info("Running offline voltage analysis...")
+		ctx := context.Background()
+		if err := analysis.RunVoltageAnalysis(ctx, store); err != nil {
+			slog.Error("Voltage analysis failed", "error", err)
+			os.Exit(1)
+		}
+		cursor, err := store.GetVoltageAnalysisCursor(ctx)
+		if err == nil {
+			slog.Info("Analysis complete", "last_run_at", cursor.LastRunAt)
+		} else {
+			slog.Info("Analysis complete")
+		}
+		os.Exit(0)
 	}
 	defer func() {
 		if err := store.Close(); err != nil {
