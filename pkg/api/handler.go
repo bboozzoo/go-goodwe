@@ -101,7 +101,8 @@ type Handler struct {
 	daemon        DaemonStatus    // may be nil
 	store         SensorStore          // may be nil; aggregate endpoint returns 501
 	analysisStore VoltageAnalysisStore // may be nil; analysis endpoint returns 501
-	inverterIP    string          // IP address of the inverter, for display
+	pollInterval  time.Duration        // poll interval for next-analysis estimate
+	inverterIP    string               // IP address of the inverter, for display
 	daemonVersion string          // daemon build version (set at construction)
 	debug         bool
 	mux           http.Handler
@@ -109,8 +110,8 @@ type Handler struct {
 
 // New creates an API handler. inverter, daemonStatus, and sensorStore may
 // be nil; endpoints return appropriate error codes when dependencies are missing.
-func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, daemonVersion string, debug bool, voltageAnalysisStore VoltageAnalysisStore) *Handler {
-	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, analysisStore: voltageAnalysisStore, inverterIP: inverterIP, daemonVersion: daemonVersion, debug: debug}
+func New(inverter goodwe.Inverter, daemonStatus DaemonStatus, sensorStore SensorStore, inverterIP string, daemonVersion string, debug bool, voltageAnalysisStore VoltageAnalysisStore, pollInterval time.Duration) *Handler {
+	h := &Handler{inverter: inverter, daemon: daemonStatus, store: sensorStore, analysisStore: voltageAnalysisStore, pollInterval: pollInterval, inverterIP: inverterIP, daemonVersion: daemonVersion, debug: debug}
 	h.mux = h.buildRoutes()
 	return h
 }
@@ -474,6 +475,7 @@ func (h *Handler) handleGridVoltage(w http.ResponseWriter, r *http.Request) {
 		},
 		"analysis": map[string]any{
 			"last_run_at": lastRunAt,
+			"poll_interval_seconds": h.pollInterval.Seconds(),
 		},
 	}
 	writeJSON(w, http.StatusOK, resp)

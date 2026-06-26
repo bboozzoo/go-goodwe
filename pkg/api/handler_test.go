@@ -149,7 +149,7 @@ func (m *mockSensorStore) GetVoltageAnalysisCursor(ctx context.Context) (*db.Vol
 // ---- helpers ----
 
 func newHandler(inv goodwe.Inverter, ds DaemonStatus, ss SensorStore) *Handler {
-	return New(inv, ds, ss, "10.0.0.1", "test-version", false, nil)
+	return New(inv, ds, ss, "10.0.0.1", "test-version", false, nil, 0)
 }
 
 func getBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
@@ -248,7 +248,7 @@ func TestHealth_VerificationError(t *testing.T) {
 }
 
 func TestHealth_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false, nil)
+	h := New(nil, nil, nil, "", "", false, nil, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/health", nil)
 	h.ServeHTTP(rr, req)
@@ -296,7 +296,7 @@ func TestInfo_FromDB(t *testing.T) {
 }
 
 func TestInfo_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false, nil)
+	h := New(nil, nil, nil, "", "", false, nil, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/info", nil)
 	h.ServeHTTP(rr, req)
@@ -394,7 +394,7 @@ func TestGetData_UnknownSensor(t *testing.T) {
 }
 
 func TestGetData_NoInverter(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false, nil)
+	h := New(nil, nil, nil, "", "", false, nil, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/data/battery_soc", nil)
 	h.ServeHTTP(rr, req)
@@ -720,7 +720,7 @@ func TestDownsample_ReturnsAtMostMax(t *testing.T) {
 }
 
 func TestGridVoltage_NoStore(t *testing.T) {
-	h := New(nil, nil, nil, "", "", false, nil)
+	h := New(nil, nil, nil, "", "", false, nil, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage", nil)
 	h.ServeHTTP(rr, req)
@@ -729,7 +729,7 @@ func TestGridVoltage_NoStore(t *testing.T) {
 
 func TestGridVoltage_Empty(t *testing.T) {
 	ss := &mockSensorStore{}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=20", nil)
 	h.ServeHTTP(rr, req)
@@ -764,7 +764,7 @@ func TestGridVoltage_FirstPage(t *testing.T) {
 			return &db.VoltageAnalysisCursor{LastRunAt: time.Now().UTC()}, nil
 		},
 	}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=20", nil)
 	h.ServeHTTP(rr, req)
@@ -797,7 +797,7 @@ func TestGridVoltage_SecondPage(t *testing.T) {
 			return events, 30, nil
 		},
 	}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?before=10&limit=20", nil)
 	h.ServeHTTP(rr, req)
@@ -811,7 +811,7 @@ func TestGridVoltage_SecondPage(t *testing.T) {
 
 func TestGridVoltage_InvalidLimit(t *testing.T) {
 	ss := &mockSensorStore{}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=200", nil)
 	h.ServeHTTP(rr, req)
@@ -822,7 +822,7 @@ func TestGridVoltage_InvalidLimit(t *testing.T) {
 
 func TestGridVoltage_InvalidBefore(t *testing.T) {
 	ss := &mockSensorStore{}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?before=-1", nil)
 	h.ServeHTTP(rr, req)
@@ -838,7 +838,7 @@ func TestGridVoltage_AnalysisMetadata(t *testing.T) {
 			return &db.VoltageAnalysisCursor{LastRunAt: now}, nil
 		},
 	}
-	h := New(nil, nil, ss, "", "", false, ss)
+	h := New(nil, nil, ss, "", "", false, ss, 0)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/analysis/grid_voltage?limit=1", nil)
 	h.ServeHTTP(rr, req)

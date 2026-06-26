@@ -263,6 +263,8 @@ func (d *Daemon) doPoll(ctx context.Context) {
 	if d.store != nil {
 		if err := analysis.RunVoltageAnalysis(ctx, d.store); err != nil {
 			slog.Warn("Voltage analysis failed", "error", err)
+		} else {
+			slog.Debug("Voltage analysis complete")
 		}
 	}
 

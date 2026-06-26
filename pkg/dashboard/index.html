@@ -201,6 +201,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
       <h2 style="font-size:1rem;font-weight:600;color:var(--text-accent);margin:0">Grid Voltage Quality</h2>
       <span style="font-size:0.75rem;color:var(--text-muted)">IEC 60038: 207V — 253V</span>
       <span id="voltage-last-run" style="font-size:0.75rem;color:var(--text-muted);margin-left:auto"></span>
+      <span id="voltage-next-run" style="font-size:0.75rem;color:var(--text-muted)"></span>
     </div>
     <div id="voltage-events-container">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
@@ -778,6 +779,16 @@ async function loadVoltageEvents() {
     if (analysis.last_run_at) {
       document.getElementById('voltage-last-run').textContent =
         'Last analyzed: ' + new Date(analysis.last_run_at).toLocaleString();
+    }
+    if (analysis.last_run_at && analysis.poll_interval_seconds > 0) {
+      const nextTime = new Date(analysis.last_run_at).getTime() + analysis.poll_interval_seconds * 1000;
+      const updateCountdown = () => {
+        const remaining = Math.max(0, Math.round((nextTime - Date.now()) / 1000));
+        document.getElementById('voltage-next-run').textContent = 'Next: ~' + remaining + 's';
+      };
+      updateCountdown();
+      if (window._voltageCountdown) clearInterval(window._voltageCountdown);
+      window._voltageCountdown = setInterval(updateCountdown, 1000);
     }
 
     if (events.length === 0 && voltageCursor === 0) {
