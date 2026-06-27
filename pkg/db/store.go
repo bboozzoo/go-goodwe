@@ -425,32 +425,6 @@ func migrate(db *sql.DB) error {
 	`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS voltage_analysis_cursor (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			last_processed_sample_id INTEGER NOT NULL DEFAULT 0,
-			ongoing_l1_event_id INTEGER,
-			ongoing_l2_event_id INTEGER,
-			ongoing_l3_event_id INTEGER,
-			last_run_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00'
-		);
-		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_sample_id, last_run_at) VALUES (1, 0, '1970-01-01 00:00:00');
-		CREATE TABLE IF NOT EXISTS voltage_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			phase TEXT NOT NULL,
-			start_sample_id INTEGER NOT NULL DEFAULT 0,
-			start_time TIMESTAMP NOT NULL,
-			end_sample_id INTEGER,
-			end_time TIMESTAMP,
-			min_voltage REAL NOT NULL,
-			max_voltage REAL NOT NULL,
-			avg_voltage REAL NOT NULL,
-			duration_seconds INTEGER
-		);
-		CREATE INDEX IF NOT EXISTS idx_voltage_events_phase_start ON voltage_events(phase, start_time DESC);
-	`); err != nil {
-		return err
-	}
 	// Add columns for databases created before they existed (non-fatal if already present).
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN rated_power INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN firmware TEXT NOT NULL DEFAULT ''`)

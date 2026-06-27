@@ -29,6 +29,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -398,4 +399,100 @@ func TestStringValueRoundTrip(t *testing.T) {
 	require.NotNil(t, samples[0].ValueText)
 	assert.Equal(t, "hello world", *samples[0].ValueText)
 	assert.Nil(t, samples[0].Value)
+}
+
+func TestMigration_VoltageTablesCreated(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Verify the voltage_analysis_cursor was created with initial row.
+	cursor, err := s.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, int64(1), cursor.ID)
+	assert.Equal(t, int64(0), cursor.LastProcessedSampleID)
+	assert.Nil(t, cursor.OngoingL1EventID)
+	assert.Nil(t, cursor.OngoingL2EventID)
+	assert.Nil(t, cursor.OngoingL3EventID)
+
+	// Verify voltage_events table exists and is queryable.
+	events, total, err := s.QueryVoltageEvents(ctx, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	assert.Equal(t, 0, total)
+
+	// Verify cursor can be updated and re-read.
+	cursor.LastProcessedSampleID = 42
+	err = s.SaveVoltageAnalysisCursor(ctx, cursor)
+	require.NoError(t, err)
+
+	cursor2, err := s.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, cursor2)
+	assert.Equal(t, int64(42), cursor2.LastProcessedSampleID)
+}
+
+func TestMigration_OldSchemaUpgrade(t *testing.T) {
+	// Create a database with the OLD schema (last_processed_nano), close it,
+	// then open it again — the migration should upgrade it.
+	dbPath := filepath.Join(t.TempDir(), "old_schema.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		CREATE TABLE IF NOT EXISTS voltage_analysis_cursor (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_processed_nano INTEGER NOT NULL DEFAULT 0,
+			ongoing_l1_event_id INTEGER,
+			ongoing_l2_event_id INTEGER,
+			ongoing_l3_event_id INTEGER,
+			last_run_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00'
+		);
+		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_nano, last_run_at) VALUES (1, 42, '2026-06-27 00:00:00');
+		CREATE TABLE IF NOT EXISTS voltage_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			phase TEXT NOT NULL,
+			start_sample_id INTEGER NOT NULL DEFAULT 0,
+			start_time TIMESTAMP NOT NULL,
+			end_sample_id INTEGER,
+			end_time TIMESTAMP,
+			min_voltage REAL NOT NULL,
+			max_voltage REAL NOT NULL,
+			avg_voltage REAL NOT NULL,
+			duration_seconds INTEGER
+		);
+		INSERT INTO voltage_events (phase, start_sample_id, start_time, min_voltage, max_voltage, avg_voltage)
+		VALUES ('meter_voltage1', 1, '2026-06-27 00:00:00', 200.0, 200.0, 200.0);
+	`)
+	require.NoError(t, err)
+	_ = rawDB.Close()
+
+	// Open via migration — should drop old tables and recreate with new schema.
+	s2, err := Open("sqlite://" + dbPath)
+	require.NoError(t, err)
+	defer func() { _ = s2.Close() }()
+
+	ctx := context.Background()
+
+	// Cursor should be reset.
+	cursor, err := s2.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, int64(0), cursor.LastProcessedSampleID, "cursor should be reset to 0")
+
+	// Old voltage events should be gone.
+	events, total, err := s2.QueryVoltageEvents(ctx, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	assert.Equal(t, 0, total, "old events should be deleted")
+
+	// New cursor should accept the new column name.
+	cursor.LastProcessedSampleID = 7
+	err = s2.SaveVoltageAnalysisCursor(ctx, cursor)
+	require.NoError(t, err)
+
+	cursor2, err := s2.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, cursor2)
+	assert.Equal(t, int64(7), cursor2.LastProcessedSampleID)
 }
