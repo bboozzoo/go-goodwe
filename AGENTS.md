@@ -136,7 +136,8 @@ State is exposed via `DaemonStatus` interface for the API handler.
 | `GET` | `/api/info` | Inverter identity from DB: `{serial, model, firmware, rated_power, last_poll_time}` |
 | `GET` | `/api/sensors` | List all 199 sensors: `[{name, category}, ...]` |
 | `GET` | `/api/data/{sensor}` | Live Modbus read: `{name, value, unit, timestamp}` |
-| `GET` | `/api/data/{sensor}/aggregate` | Historical from DB: `?since=&until=&limit=&latest=true` |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical from DB: `?since=&until=&limit=&latest=&delta=` |
+| `GET` | `/api/analysis/grid_voltage` | Voltage quality events: `?before=&limit=` |
 | `GET` | `/dashboard` | Single-page dashboard |
 | `GET` | `/` | Redirect to `/dashboard` |
 

@@ -101,6 +101,7 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 | `-purge` | `""` | One-shot: purge all data older than this date and exit (e.g. `2026-01-01`) |
 | `-debug` | `false` | Enable debug logging |
 | `-version` | `false` | Display version information and exit |
+| `-offline-analyze-voltage` | `false` | Run voltage analysis on the DB once and exit |
 
 ### API Endpoints
 
@@ -110,7 +111,8 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 | `GET` | `/api/info` | Inverter information |
 | `GET` | `/api/sensors` | List of available sensors |
 | `GET` | `/api/data/{sensor}` | Live sensor reading |
-| `GET` | `/api/data/{sensor}/aggregate` | Historical sensor data from DB |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical sensor data from DB: `?since=&until=&limit=&latest=&delta=` |
+| `GET` | `/api/analysis/grid_voltage` | Voltage events: `?before=&limit=` |
 | `GET` | `/dashboard` | Embedded dashboard (WIP) |
 
 ### REST API
@@ -192,6 +194,35 @@ $ curl -s "http://localhost:8080/api/data/ppv/aggregate?since=2026-06-14T00:00:0
 
 # Most recent sample only
 $ curl -s "http://localhost:8080/api/data/ppv/aggregate?latest=true"
+
+**`GET /api/data/{sensor}/aggregate?delta=`** — Cumulative delta query. Returns sample values adjusted by subtracting the value at the given timestamp. Useful for computing daily energy from cumulative registers:
+
+```bash
+$ curl -s "http://localhost:8080/api/data/e_total_exp/aggregate?delta=2026-06-26T00:00:00Z&limit=1"
+```
+
+**`GET /api/analysis/grid_voltage`** — List detected voltage quality events (outside 207V–253V range per IEC 60038). Supports cursor-based pagination:
+
+```bash
+$ curl -s "http://localhost:8080/api/analysis/grid_voltage?limit=5"
+{
+  "events": [
+    {
+      "id": 42,
+      "phase": "meter_voltage1",
+      "start_time": "2026-06-26T14:23:00Z",
+      "end_time": "2026-06-26T14:28:12Z",
+      "duration_seconds": 312,
+      "min_voltage": 203.2,
+      "max_voltage": 206.8,
+      "avg_voltage": 205.4
+    }
+  ],
+  "total_events": 42,
+  "cursor": { "next": 37, "has_more": true },
+  "analysis": { "last_run_at": "...", "poll_interval_seconds": 30 }
+}
+```
 ```
 
 ### Troubleshooting
