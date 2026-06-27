@@ -112,7 +112,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .graph-card .graph-header .reset-zoom-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0.15rem 0.4rem; border-radius: 3px; margin-right: 0.4rem; } .graph-card .graph-header .reset-zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .graph-card canvas { width: 100% !important; max-height: 250px; cursor: grab; touch-action: none; }
 .graph-card canvas:active { cursor: grabbing; }
-.graph-card .sensor-header-max { color: var(--color-warning, #fbbf24); font-weight: 400; font-size: 0.7rem; }
 .card .value.approx { color: var(--color-off-grid); }
 .card .value .warn-icon { color: var(--color-off-grid); cursor: help; font-size: 0.85rem; margin-left: 0.25rem; }
 .empty-state { display: flex; align-items: center; justify-content: center; height: 100%;
@@ -541,7 +540,7 @@ function onSensorClick(name) {
     card.id = `graph-${id}`;
     card.innerHTML = `
       <div class="graph-header">
-        <div><span class="sensor-name">${name}</span> <span class="sensor-unit">${unit || ''}</span> <span class="sensor-header-max"></span></div>
+        <div><span class="sensor-name">${name}</span> <span class="sensor-unit">${unit || ''}</span></div>
         <div>
           <button class="reset-zoom-btn" onclick="resetGraphZoom(${id})" title="Reset zoom">⟲</button>
           <button class="close-btn" onclick="closeGraph(${id})" title="Close graph">&times;</button>
@@ -637,20 +636,19 @@ async function refreshGraph(graph) {
     const xScale = graph.chart && graph.chart.scales.x;
     if (!xScale) return;
     const { min, max } = xScale;
-    const card = document.getElementById(`graph-${graph.id}`);
-    if (!card) return;
-    const headers = card.querySelectorAll('.sensor-header-max');
-    graph.chart.data.datasets.forEach((ds, i) => {
+    // Show max value in the legend by updating dataset labels.
+    graph.chart.data.datasets.forEach(ds => {
       let maxVal = -Infinity;
       for (const pt of ds.data) {
         if (pt.x >= min && pt.x <= max && pt.y != null) {
           if (pt.y > maxVal) maxVal = pt.y;
         }
       }
-      if (headers[i]) {
-        headers[i].textContent = maxVal !== -Infinity ? 'max: ' + maxVal.toFixed(1) + ' ' + graph.unit : '';
-      }
+      // Strip previous max suffix, then append new one.
+      const baseLabel = ds.label.replace(/ \(max: .*\)$/, '');
+      ds.label = maxVal !== -Infinity ? baseLabel + ' (max: ' + maxVal.toFixed(1) + ' ' + graph.unit + ')' : baseLabel;
     });
+    graph.chart.update('none');
   }
 
   graph.chart = new Chart(ctx, {
