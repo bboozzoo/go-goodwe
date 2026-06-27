@@ -73,6 +73,53 @@ is a work-in-progress.
 $ go build ./cmd/goodwe-daemon/
 ```
 
+### Docker / Podman
+
+A multi-stage Dockerfile is provided at the repository root. Build the image:
+
+```sh
+# Build with podman (or docker):
+podman build -t goodwe-daemon .
+```
+
+Run the daemon with environment variables:
+
+```sh
+podman run -d \
+  --name goodwe \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v goodwe-data:/var/lib/goodwe \
+  -e INVERTER_IP=192.168.4.82 \
+  -e POLL_INTERVAL=30s \
+  -e LISTEN=:8080 \
+  -e DASHBOARD=true \
+  goodwe-daemon
+```
+
+Available environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INVERTER_IP` | — | IP address of the GoodWe inverter (required) |
+| `POLL_INTERVAL` | — | Sensor poll interval (e.g. `30s`, `1m`) |
+| `LISTEN` | `:8080` | Address and port for the HTTP API server |
+| `DB_STORE` | `sqlite:///var/lib/goodwe/goodwe.db` | Database path |
+| `DASHBOARD` | `false` | Set to `true` to enable the embedded dashboard |
+| `DEBUG` | `false` | Set to `true` for debug logging |
+
+The entrypoint also supports running commands inside the container. For example, to run voltage analysis offline:
+
+```sh
+podman exec -it goodwe goodwe-daemon -offline-analyze-voltage
+```
+
+Or use the CLI tool:
+
+```sh
+podman run --rm goodwe-daemon goodwe -version
+```
+
 ### Starting the Daemon
 
 Connect to an inverter and start the API server:
