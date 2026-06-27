@@ -39,9 +39,10 @@ import (
 
 // mockStore implements VoltageStore in memory for testing.
 type mockStore struct {
-	cursor  db.VoltageAnalysisCursor
-	samples map[string][]db.Sample
-	events  []db.VoltageEvent
+	cursor    db.VoltageAnalysisCursor
+	samples   map[string][]db.Sample
+	events    []db.VoltageEvent
+	idCounter int64
 }
 
 func (m *mockStore) GetVoltageAnalysisCursor(_ context.Context) (*db.VoltageAnalysisCursor, error) {
@@ -87,12 +88,13 @@ func (m *mockStore) UpdateVoltageEvent(_ context.Context, eventID int64, minV, m
 	return nil
 }
 
-func (m *mockStore) GetNewVoltageSamplesForSensor(_ context.Context, sensorName string, sinceNano int64) ([]db.Sample, error) {
+func (m *mockStore) GetNewVoltageSampleRows(_ context.Context, sensorName string, sinceID int64) ([]db.SampleRow, error) {
 	samples := m.samples[sensorName]
-	var result []db.Sample
+	var result []db.SampleRow
 	for _, s := range samples {
-		if s.SampledAt.UnixNano() > sinceNano {
-			result = append(result, s)
+		m.idCounter++
+		if m.idCounter > sinceID {
+			result = append(result, db.SampleRow{ID: m.idCounter, Sample: s})
 		}
 	}
 	return result, nil
@@ -113,7 +115,7 @@ func makeSamplesAt(base time.Time, step time.Duration, vals ...float64) []db.Sam
 func TestNoEvents(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 231, 229, 230, 232)},
 	}
 	err := RunVoltageAnalysis(context.Background(), store)
@@ -124,7 +126,7 @@ func TestNoEvents(t *testing.T) {
 func TestSingleEvent(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200, 200, 230)},
 	}
 	err := RunVoltageAnalysis(context.Background(), store)
@@ -142,7 +144,7 @@ func TestSingleEvent(t *testing.T) {
 func TestMultipleEvents(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200, 230, 260, 260, 230)},
 	}
 	err := RunVoltageAnalysis(context.Background(), store)
@@ -155,7 +157,7 @@ func TestMultipleEvents(t *testing.T) {
 func TestBoundaryInclusive(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 207.0, 253.0, 230, 207.0)},
 	}
 	err := RunVoltageAnalysis(context.Background(), store)
@@ -167,7 +169,7 @@ func TestOngoingResume(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 200)},
 	}
 	// First run: voltage goes out of range but never comes back.
@@ -189,7 +191,7 @@ func TestOngoingResume(t *testing.T) {
 func TestMultiplePhases(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor: db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor: db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{
 			"meter_voltage1": makeSamplesAt(base, time.Minute, 230, 200, 230),
 			"meter_voltage2": makeSamplesAt(base, time.Minute, 230, 230, 230),
@@ -204,7 +206,7 @@ func TestMultiplePhases(t *testing.T) {
 func TestAllOutOfRange(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{"meter_voltage1": makeSamplesAt(base, time.Minute, 200, 200, 200)},
 	}
 	err := RunVoltageAnalysis(context.Background(), store)
@@ -217,12 +219,12 @@ func TestAllOutOfRange(t *testing.T) {
 func TestEmptyData(t *testing.T) {
 	base := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
-		cursor:  db.VoltageAnalysisCursor{LastProcessedNano: 0, LastRunAt: base},
+		cursor:  db.VoltageAnalysisCursor{LastProcessedSampleID: 0, LastRunAt: base},
 		samples: map[string][]db.Sample{},
 	}
-	cursorBefore := store.cursor.LastProcessedNano
+	cursorBefore := store.cursor.LastProcessedSampleID
 	err := RunVoltageAnalysis(context.Background(), store)
 	require.NoError(t, err)
 	assert.Empty(t, store.events)
-	assert.Equal(t, cursorBefore, store.cursor.LastProcessedNano, "cursor should be unchanged")
+	assert.Equal(t, cursorBefore, store.cursor.LastProcessedSampleID, "cursor should be unchanged")
 }

@@ -61,9 +61,16 @@ type Sample struct {
 
 
 // VoltageAnalysisCursor tracks the progress of voltage quality analysis.
+// SampleRow pairs a sample with its rowid for cursor-based progress tracking.
+type SampleRow struct {
+	ID     int64
+	Sample Sample
+}
+
+// VoltageAnalysisCursor tracks the progress of voltage quality analysis.
 type VoltageAnalysisCursor struct {
-	ID               int64
-	LastProcessedNano int64
+	ID                 int64
+	LastProcessedSampleID int64
 	OngoingL1EventID *int64
 	OngoingL2EventID *int64
 	OngoingL3EventID *int64
@@ -267,10 +274,10 @@ func (s *Store) SampleAt(ctx context.Context, name string, at time.Time) (*Sampl
 
 func (s *Store) GetVoltageAnalysisCursor(ctx context.Context) (*VoltageAnalysisCursor, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, last_processed_nano, ongoing_l1_event_id, ongoing_l2_event_id,
+		SELECT id, last_processed_sample_id, ongoing_l1_event_id, ongoing_l2_event_id,
 		       ongoing_l3_event_id, last_run_at FROM voltage_analysis_cursor WHERE id = 1`)
 	var c VoltageAnalysisCursor
-	if err := row.Scan(&c.ID, &c.LastProcessedNano, &c.OngoingL1EventID,
+	if err := row.Scan(&c.ID, &c.LastProcessedSampleID, &c.OngoingL1EventID,
 		&c.OngoingL2EventID, &c.OngoingL3EventID, &c.LastRunAt); err != nil {
 		return nil, fmt.Errorf("get voltage cursor: %w", err)
 	}
@@ -280,9 +287,9 @@ func (s *Store) GetVoltageAnalysisCursor(ctx context.Context) (*VoltageAnalysisC
 func (s *Store) SaveVoltageAnalysisCursor(ctx context.Context, c *VoltageAnalysisCursor) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE voltage_analysis_cursor SET
-			last_processed_nano = ?, ongoing_l1_event_id = ?, ongoing_l2_event_id = ?,
+			last_processed_sample_id = ?, ongoing_l1_event_id = ?, ongoing_l2_event_id = ?,
 			ongoing_l3_event_id = ?, last_run_at = ? WHERE id = 1`,
-		c.LastProcessedNano, c.OngoingL1EventID, c.OngoingL2EventID,
+		c.LastProcessedSampleID, c.OngoingL1EventID, c.OngoingL2EventID,
 		c.OngoingL3EventID, c.LastRunAt)
 	if err != nil {
 		return fmt.Errorf("save voltage cursor: %w", err)
@@ -355,22 +362,22 @@ func (s *Store) QueryVoltageEvents(ctx context.Context, before int64, limit int)
 	return events, total, rows.Err()
 }
 
-func (s *Store) GetNewVoltageSamplesForSensor(ctx context.Context, sensorName string, sinceNano int64) ([]Sample, error) {
+func (s *Store) GetNewVoltageSampleRows(ctx context.Context, sensorName string, sinceID int64) ([]SampleRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT value, value_text, unit, sampled_at FROM sensor_samples
-		WHERE sensor_name = ? AND sampled_at > ? ORDER BY sampled_at ASC`,
-		sensorName, time.Unix(0, sinceNano))
+		SELECT rowid, value, value_text, unit, sampled_at FROM sensor_samples
+		WHERE sensor_name = ? AND rowid > ? ORDER BY rowid ASC`,
+		sensorName, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("query voltage samples: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var samples []Sample
+	var samples []SampleRow
 	for rows.Next() {
-		var s Sample
-		if err := rows.Scan(&s.Value, &s.ValueText, &s.Unit, &s.SampledAt); err != nil {
+		var sr SampleRow
+		if err := rows.Scan(&sr.ID, &sr.Sample.Value, &sr.Sample.ValueText, &sr.Sample.Unit, &sr.Sample.SampledAt); err != nil {
 			return nil, fmt.Errorf("scan sample: %w", err)
 		}
-		samples = append(samples, s)
+		samples = append(samples, sr)
 	}
 	return samples, rows.Err()
 }
@@ -421,13 +428,13 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS voltage_analysis_cursor (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
-			last_processed_nano INTEGER NOT NULL DEFAULT 0,
+			last_processed_sample_id INTEGER NOT NULL DEFAULT 0,
 			ongoing_l1_event_id INTEGER,
 			ongoing_l2_event_id INTEGER,
 			ongoing_l3_event_id INTEGER,
 			last_run_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00'
 		);
-		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_nano, last_run_at) VALUES (1, 0, '1970-01-01 00:00:00');
+		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_sample_id, last_run_at) VALUES (1, 0, '1970-01-01 00:00:00');
 		CREATE TABLE IF NOT EXISTS voltage_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			phase TEXT NOT NULL,
@@ -449,6 +456,11 @@ func migrate(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN firmware TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN dsp_version TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN arm_version TEXT NOT NULL DEFAULT ''`)
+
+	// Migrate voltage analysis cursor from nano timestamp to sample rowid.
+	_, _ = db.Exec(`ALTER TABLE voltage_analysis_cursor RENAME COLUMN last_processed_nano TO last_processed_sample_id`)
+	_, _ = db.Exec(`UPDATE voltage_analysis_cursor SET last_processed_sample_id = 0, ongoing_l1_event_id = NULL, ongoing_l2_event_id = NULL, ongoing_l3_event_id = NULL`)
+	_, _ = db.Exec(`DELETE FROM voltage_events`)
 	return nil
 }
 

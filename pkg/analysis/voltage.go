@@ -31,6 +31,7 @@ package analysis
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/bboozzoo/go-goodwe/pkg/db"
@@ -50,7 +51,7 @@ type VoltageStore interface {
 	InsertVoltageEvent(ctx context.Context, phase string, startSampleID int64, startTime time.Time, minV, maxV, avgV float64) (int64, error)
 	CloseVoltageEvent(ctx context.Context, eventID int64, endSampleID int64, endTime time.Time, durationSec int) error
 	UpdateVoltageEvent(ctx context.Context, eventID int64, minV, maxV, avgV float64) error
-	GetNewVoltageSamplesForSensor(ctx context.Context, sensorName string, sinceNano int64) ([]db.Sample, error)
+	GetNewVoltageSampleRows(ctx context.Context, sensorName string, sinceID int64) ([]db.SampleRow, error)
 }
 
 // phaseState tracks the current analysis state for one electrical phase.
@@ -71,15 +72,23 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 		return fmt.Errorf("get cursor: %w", err)
 	}
 
+	slog.Info("Voltage analysis starting",
+		"last_processed_sample_id", cursor.LastProcessedSampleID,
+		"ongoing_l1", cursor.OngoingL1EventID != nil,
+		"ongoing_l2", cursor.OngoingL2EventID != nil,
+		"ongoing_l3", cursor.OngoingL3EventID != nil)
+
 	sensors := []string{"meter_voltage1", "meter_voltage2", "meter_voltage3"}
 	ongoingPtrs := []**int64{&cursor.OngoingL1EventID, &cursor.OngoingL2EventID, &cursor.OngoingL3EventID}
-	maxSeenNano := cursor.LastProcessedNano
+	maxSeenID := cursor.LastProcessedSampleID
 
 	for i, sensor := range sensors {
-		samples, err := store.GetNewVoltageSamplesForSensor(ctx, sensor, cursor.LastProcessedNano)
+		samples, err := store.GetNewVoltageSampleRows(ctx, sensor, cursor.LastProcessedSampleID)
 		if err != nil {
 			return fmt.Errorf("get samples for %s: %w", sensor, err)
 		}
+
+		slog.Info("Voltage analysis sensor", "sensor", sensor, "samples", len(samples))
 
 		var state phaseState
 
@@ -89,21 +98,20 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 		}
 
 		for _, s := range samples {
-			if s.Value == nil {
+			// Track progress via rowid.
+			if s.ID > maxSeenID {
+				maxSeenID = s.ID
+			}
+			if s.Sample.Value == nil {
 				continue
 			}
-			v := *s.Value
+			v := *s.Sample.Value
 			isOut := v < VoltageMin || v > VoltageMax
-
-			// Track progress via sample timestamps.
-			if s.SampledAt.UnixNano() > maxSeenNano {
-				maxSeenNano = s.SampledAt.UnixNano()
-			}
 
 			if isOut {
 				if state.eventID == nil {
 					// Start new event.
-					state.startTime = s.SampledAt
+					state.startTime = s.Sample.SampledAt
 					state.minV = v
 					state.maxV = v
 					state.sumV = v
@@ -139,8 +147,8 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 			} else {
 				// Voltage back in range.
 				if state.eventID != nil {
-					durSec := int(s.SampledAt.Sub(state.startTime).Seconds())
-					if err := store.CloseVoltageEvent(ctx, *state.eventID, 0, s.SampledAt, durSec); err != nil {
+					durSec := int(s.Sample.SampledAt.Sub(state.startTime).Seconds())
+					if err := store.CloseVoltageEvent(ctx, *state.eventID, 0, s.Sample.SampledAt, durSec); err != nil {
 						return fmt.Errorf("close event: %w", err)
 					}
 					state.eventID = nil
@@ -156,7 +164,8 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 		}
 	}
 
-	cursor.LastProcessedNano = maxSeenNano
+	cursor.LastProcessedSampleID = maxSeenID
 	cursor.LastRunAt = time.Now().UTC()
+	slog.Info("Voltage analysis complete", "new_cursor", cursor.LastProcessedSampleID)
 	return store.SaveVoltageAnalysisCursor(ctx, cursor)
 }
