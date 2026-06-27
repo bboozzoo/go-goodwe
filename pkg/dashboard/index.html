@@ -158,6 +158,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="card"><div class="label">⚡ Load Today</div><div class="value" id="sys-load-today">-</div></div>
   <div class="card"><div class="label">⬇ Grid Import</div><div class="value" id="sys-grid-import">-</div></div>
   <div class="card"><div class="label">⬆ Grid Export</div><div class="value" id="sys-grid-export">-</div></div>
+  <div class="card"><div class="label">🌡 Temperature</div><div class="value" id="sys-temperature">-</div></div>
 </div>
 
 <div class="view-nav">
@@ -340,7 +341,7 @@ async function loadStatus() {
         return d.samples?.[0] || null;
       });
 
-    const [grid, house, pv, battery, errors, pvToday, gridImpToday, gridExpToday, batDischargeToday, batChargeToday] = await Promise.all([
+    const [grid, house, pv, battery, errors, pvToday, gridImpToday, gridExpToday, batDischargeToday, batChargeToday, temp] = await Promise.all([
       fetchLatest('work_mode_label'),
       fetchLatest('house_consumption'),
       fetchLatest('ppv'),
@@ -351,6 +352,7 @@ async function loadStatus() {
       fetchDelta(GRID_EXPORT_SENSOR, midnight),
       fetchLatest('e_bat_discharge_day'),
       fetchLatest('e_bat_charge_day'),
+      fetchLatest('temperature'),
     ]);
 
     if (grid) {
@@ -403,6 +405,8 @@ async function loadStatus() {
     document.getElementById('sys-grid-export').className = 'value' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' approx' : '');
     document.getElementById('sys-grid-export').title =
       'e_total_exp(delta)' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' (approx, reference gap: ' + Math.round(deltaGapSeconds / 60) + ' min)' : '');
+    document.getElementById('sys-temperature').textContent =
+      temp ? (temp.value != null ? temp.value + ' °C' : temp.value_text || '-') : '-';
   } catch (e) {
     // status display is best-effort
   }
