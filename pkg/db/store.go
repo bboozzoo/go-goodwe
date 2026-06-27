@@ -60,7 +60,6 @@ type Sample struct {
 	SampledAt time.Time `json:"sampled_at"`
 }
 
-
 // VoltageAnalysisCursor tracks the progress of voltage quality analysis.
 // SampleRow pairs a sample with its rowid for cursor-based progress tracking.
 type SampleRow struct {
@@ -70,12 +69,12 @@ type SampleRow struct {
 
 // VoltageAnalysisCursor tracks the progress of voltage quality analysis.
 type VoltageAnalysisCursor struct {
-	ID                 int64
+	ID                    int64
 	LastProcessedSampleID int64
-	OngoingL1EventID *int64
-	OngoingL2EventID *int64
-	OngoingL3EventID *int64
-	LastRunAt        time.Time
+	OngoingL1EventID      *int64
+	OngoingL2EventID      *int64
+	OngoingL3EventID      *int64
+	LastRunAt             time.Time
 }
 
 // VoltageEvent represents a detected voltage quality event (out-of-range).
@@ -91,6 +90,7 @@ type VoltageEvent struct {
 	AvgVoltage      float64    `json:"avg_voltage"`
 	DurationSeconds *int       `json:"duration_seconds,omitempty"`
 }
+
 // Store provides access to the SQLite database.
 type Store struct {
 	db *sql.DB

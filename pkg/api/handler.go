@@ -97,13 +97,13 @@ type VoltageAnalysisStore interface {
 
 // Handler serves the REST API endpoints.
 type Handler struct {
-	inverter      goodwe.Inverter // may be nil when no inverter is configured
-	daemon        DaemonStatus    // may be nil
+	inverter      goodwe.Inverter      // may be nil when no inverter is configured
+	daemon        DaemonStatus         // may be nil
 	store         SensorStore          // may be nil; aggregate endpoint returns 501
 	analysisStore VoltageAnalysisStore // may be nil; analysis endpoint returns 501
 	pollInterval  time.Duration        // poll interval for next-analysis estimate
 	inverterIP    string               // IP address of the inverter, for display
-	daemonVersion string          // daemon build version (set at construction)
+	daemonVersion string               // daemon build version (set at construction)
 	debug         bool
 	mux           http.Handler
 }
@@ -474,7 +474,7 @@ func (h *Handler) handleGridVoltage(w http.ResponseWriter, r *http.Request) {
 			"has_more": hasMore,
 		},
 		"analysis": map[string]any{
-			"last_run_at": lastRunAt,
+			"last_run_at":           lastRunAt,
 			"poll_interval_seconds": h.pollInterval.Seconds(),
 		},
 	}

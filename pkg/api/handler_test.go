@@ -95,11 +95,11 @@ func (m *mockDaemonStatus) VerificationError() error         { return m.verifica
 
 type mockSensorStore struct {
 	onGetIdentity              func(ctx context.Context) (*db.InverterIdentity, error)
-	onQuerySamples            func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
-	onLatestSample            func(ctx context.Context, name string) (*db.Sample, error)
-	onLastTime                func(ctx context.Context) (*time.Time, error)
-	onSampleAt                func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
-	onQueryVoltageEvents      func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
+	onQuerySamples             func(ctx context.Context, name string, since, until time.Time, limit int) ([]db.Sample, error)
+	onLatestSample             func(ctx context.Context, name string) (*db.Sample, error)
+	onLastTime                 func(ctx context.Context) (*time.Time, error)
+	onSampleAt                 func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
+	onQueryVoltageEvents       func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
 	onGetVoltageAnalysisCursor func(ctx context.Context) (*db.VoltageAnalysisCursor, error)
 }
 
