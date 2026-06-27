@@ -405,6 +405,10 @@ func (s *Store) PurgeBadSamples(ctx context.Context, ratedPower int) error {
 
 // migrate creates tables if they don't exist and applies schema upgrades.
 func migrate(db *sql.DB) error {
+	// Check current schema version.
+	var schemaVersion int
+	_ = db.QueryRow(`PRAGMA user_version`).Scan(&schemaVersion)
+
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS inverter_identity (
 			serial     TEXT PRIMARY KEY,
@@ -458,6 +462,11 @@ func migrate(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_voltage_events_phase_start ON voltage_events(phase, start_time DESC);
 	`)
+
+	// Update schema version for future migration tracking.
+	if schemaVersion < 2 {
+		_, _ = db.Exec(`PRAGMA user_version = 2`)
+	}
 	return nil
 }
 

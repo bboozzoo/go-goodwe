@@ -421,6 +421,12 @@ func TestMigration_VoltageTablesCreated(t *testing.T) {
 	assert.Empty(t, events)
 	assert.Equal(t, 0, total)
 
+	// Verify schema version is set.
+	var sv int
+	err = s.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
+	require.NoError(t, err)
+	assert.Equal(t, 2, sv, "schema version should be 2")
+
 	// Verify cursor can be updated and re-read.
 	cursor.LastProcessedSampleID = 42
 	err = s.SaveVoltageAnalysisCursor(ctx, cursor)
@@ -473,6 +479,12 @@ func TestMigration_OldSchemaUpgrade(t *testing.T) {
 	defer func() { _ = s2.Close() }()
 
 	ctx := context.Background()
+
+	// Schema version should be 2.
+	var sv int
+	err = s2.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
+	require.NoError(t, err)
+	assert.Equal(t, 2, sv, "schema version should be 2")
 
 	// Cursor should be reset.
 	cursor, err := s2.GetVoltageAnalysisCursor(ctx)
