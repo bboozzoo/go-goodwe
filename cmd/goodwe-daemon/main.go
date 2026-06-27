@@ -140,7 +140,7 @@ func main() {
 			slog.Warn("Error closing database on shutdown", "error", err)
 		}
 	}()
-	slog.Info("Database opened")
+	slog.Info("Database opened", "schema_version", store.SchemaVersion())
 
 	// Discover and connect to the inverter.
 	var inverter goodwe.Inverter

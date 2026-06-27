@@ -31,6 +31,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,13 @@ func Open(dsn string) (*Store, error) {
 }
 
 // Close closes the database.
+// SchemaVersion returns the current database schema version.
+func (s *Store) SchemaVersion() int {
+	var v int
+	_ = s.db.QueryRow(`PRAGMA user_version`).Scan(&v)
+	return v
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }
@@ -467,6 +475,11 @@ func migrate(db *sql.DB) error {
 	if schemaVersion < 2 {
 		_, _ = db.Exec(`PRAGMA user_version = 2`)
 	}
+
+	// Re-read version for logging.
+	var finalVersion int
+	_ = db.QueryRow(`PRAGMA user_version`).Scan(&finalVersion)
+	slog.Info("Schema migration complete", "version", finalVersion)
 	return nil
 }
 
