@@ -406,7 +406,8 @@ async function loadStatus() {
     document.getElementById('sys-grid-export').title =
       'e_total_exp(delta)' + (deltaGapSeconds > GAP_WARN_SECONDS ? ' (approx, reference gap: ' + Math.round(deltaGapSeconds / 60) + ' min)' : '');
     document.getElementById('sys-temperature').textContent =
-      temp ? (temp.value != null ? temp.value + ' °C' : temp.value_text || '-') : '-';
+      temp ? (temp.value != null ? Math.round(temp.value) + ' °C' : temp.value_text || '-') : '-';
+    document.getElementById('sys-temperature').title = 'temperature — Inverter Radiator Temperature';
   } catch (e) {
     // status display is best-effort
   }
