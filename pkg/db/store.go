@@ -458,9 +458,32 @@ func migrate(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE inverter_identity ADD COLUMN arm_version TEXT NOT NULL DEFAULT ''`)
 
 	// Migrate voltage analysis cursor from nano timestamp to sample rowid.
-	_, _ = db.Exec(`ALTER TABLE voltage_analysis_cursor RENAME COLUMN last_processed_nano TO last_processed_sample_id`)
-	_, _ = db.Exec(`UPDATE voltage_analysis_cursor SET last_processed_sample_id = 0, ongoing_l1_event_id = NULL, ongoing_l2_event_id = NULL, ongoing_l3_event_id = NULL`)
-	_, _ = db.Exec(`DELETE FROM voltage_events`)
+	_, _ = db.Exec(`DROP TABLE IF EXISTS voltage_analysis_cursor`)
+	_, _ = db.Exec(`DROP TABLE IF EXISTS voltage_events`)
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS voltage_analysis_cursor (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_processed_sample_id INTEGER NOT NULL DEFAULT 0,
+			ongoing_l1_event_id INTEGER,
+			ongoing_l2_event_id INTEGER,
+			ongoing_l3_event_id INTEGER,
+			last_run_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00'
+		);
+		INSERT OR IGNORE INTO voltage_analysis_cursor (id, last_processed_sample_id, last_run_at) VALUES (1, 0, '1970-01-01 00:00:00');
+		CREATE TABLE IF NOT EXISTS voltage_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			phase TEXT NOT NULL,
+			start_sample_id INTEGER NOT NULL DEFAULT 0,
+			start_time TIMESTAMP NOT NULL,
+			end_sample_id INTEGER,
+			end_time TIMESTAMP,
+			min_voltage REAL NOT NULL,
+			max_voltage REAL NOT NULL,
+			avg_voltage REAL NOT NULL,
+			duration_seconds INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS idx_voltage_events_phase_start ON voltage_events(phase, start_time DESC);
+	`)
 	return nil
 }
 
