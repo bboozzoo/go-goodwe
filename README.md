@@ -75,10 +75,15 @@ $ go build ./cmd/goodwe-daemon/
 
 ### Docker / Podman
 
-A multi-stage Dockerfile is provided at the repository root. Build the image:
+A multi-stage Dockerfile is provided at the repository root. Pre-built images are available via GitHub Container Registry:
 
 ```sh
-# Build with podman (or docker):
+podman pull ghcr.io/bboozzoo/go-goodwe:latest
+```
+
+To build from source:
+
+```sh
 podman build -t goodwe-daemon .
 ```
 
@@ -94,7 +99,7 @@ podman run -d \
   -e POLL_INTERVAL=30s \
   -e LISTEN=:8080 \
   -e DASHBOARD=true \
-  goodwe-daemon
+  goodwe-daemon  # or ghcr.io/bboozzoo/go-goodwe:latest
 ```
 
 Available environment variables:
