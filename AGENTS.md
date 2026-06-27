@@ -17,6 +17,8 @@
   - Use `golangci-lint` for verification (run `golangci-lint run ./...` before committing).
   - Test files must pass linter too — suppressed errors are acceptable for trivial cases
     (`_ = fn()` style is preferred over naked calls that errcheck would flag).
+  - **Test assertions**: Use `github.com/stretchr/testify/assert` and `require` instead of raw `t.Fatalf()` calls.
+    Prefer `assert.Equal(t, expected, actual)`, `require.NoError(t, err)`, `require.NotNil(t, v)`, etc.
 - **Task Tracking**: Consult `TODO.md` for the current roadmap and pending items.
 - **Code Map**: See `TODO.md § 📁 Code Map` for a file-level overview of the codebase.
 - **Testing Strategy**: Refer to the Python test suite (`python/goodwe/tests/`) to understand expected behavior and protocol nuances.
