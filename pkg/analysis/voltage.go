@@ -125,6 +125,7 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 					// Accumulate into ongoing event.
 					if state.count == 0 {
 						// First sample after create or resume — initialize from this sample.
+						state.startTime = s.Sample.SampledAt
 						state.minV = v
 						state.maxV = v
 						state.sumV = v
