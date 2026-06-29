@@ -679,6 +679,7 @@ async function refreshGraph(graph) {
         },
         y: {
           beginAtZero: true,
+          afterFit: function(scale) { scale.width = 55; },
           ticks: { color: getCSSVar('--text-muted') },
           grid: { color: getCSSVar('--border') },
           title: { display: !!graph.unit, text: graph.unit || '', color: getCSSVar('--text-secondary') },
