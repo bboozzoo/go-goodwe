@@ -316,6 +316,19 @@ func (s *Store) InsertVoltageEvent(ctx context.Context, phase string, startSampl
 	return res.LastInsertId()
 }
 
+func (s *Store) GetVoltageEvent(ctx context.Context, eventID int64) (*VoltageEvent, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, phase, start_time FROM voltage_events WHERE id = ?`, eventID)
+	var e VoltageEvent
+	if err := row.Scan(&e.ID, &e.Phase, &e.StartTime); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get voltage event: %w", err)
+	}
+	return &e, nil
+}
+
 func (s *Store) CloseVoltageEvent(ctx context.Context, eventID int64, endSampleID int64, endTime time.Time, durationSec int) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE voltage_events SET end_sample_id = ?, end_time = ?, duration_seconds = ? WHERE id = ?`,

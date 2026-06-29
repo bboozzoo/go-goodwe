@@ -51,6 +51,7 @@ type VoltageStore interface {
 	InsertVoltageEvent(ctx context.Context, phase string, startSampleID int64, startTime time.Time, minV, maxV, avgV float64) (int64, error)
 	CloseVoltageEvent(ctx context.Context, eventID int64, endSampleID int64, endTime time.Time, durationSec int) error
 	UpdateVoltageEvent(ctx context.Context, eventID int64, minV, maxV, avgV float64) error
+	GetVoltageEvent(ctx context.Context, eventID int64) (*db.VoltageEvent, error)
 	GetNewVoltageSampleRows(ctx context.Context, sensorName string, sinceID int64) ([]db.SampleRow, error)
 }
 
@@ -95,6 +96,13 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 		// Resume ongoing event from previous run.
 		if *ongoingPtrs[i] != nil {
 			state.eventID = *ongoingPtrs[i]
+			evt, err := store.GetVoltageEvent(ctx, *state.eventID)
+			if err != nil {
+				return fmt.Errorf("get event %d: %w", *state.eventID, err)
+			}
+			if evt != nil {
+				state.startTime = evt.StartTime
+			}
 		}
 
 		for _, s := range samples {
@@ -125,7 +133,6 @@ func RunVoltageAnalysis(ctx context.Context, store VoltageStore) error {
 					// Accumulate into ongoing event.
 					if state.count == 0 {
 						// First sample after create or resume — initialize from this sample.
-						state.startTime = s.Sample.SampledAt
 						state.minV = v
 						state.maxV = v
 						state.sumV = v

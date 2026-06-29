@@ -67,6 +67,14 @@ func (m *mockStore) InsertVoltageEvent(_ context.Context, phase string, _ int64,
 	return id, nil
 }
 
+func (m *mockStore) GetVoltageEvent(_ context.Context, eventID int64) (*db.VoltageEvent, error) {
+	idx := int(eventID) - 1
+	if idx < 0 || idx >= len(m.events) {
+		return nil, nil
+	}
+	return &m.events[idx], nil
+}
+
 func (m *mockStore) CloseVoltageEvent(_ context.Context, eventID int64, _ int64, endTime time.Time, durationSec int) error {
 	idx := int(eventID) - 1
 	if idx < 0 || idx >= len(m.events) {
@@ -185,6 +193,8 @@ func TestOngoingResume(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, store.events, 1)
 	require.NotNil(t, store.events[0].EndTime, "event should be closed after second run")
+	require.NotNil(t, store.events[0].DurationSeconds, "duration should be set")
+	assert.InDelta(t, 360, *store.events[0].DurationSeconds, 10, "duration should be ~6 minutes")
 	assert.Equal(t, 200.0, store.events[0].MinVoltage)
 }
 
