@@ -112,6 +112,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .graph-card .graph-header .reset-zoom-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; font-size: 0.75rem; padding: 0.15rem 0.4rem; border-radius: 3px; margin-right: 0.4rem; } .graph-card .graph-header .reset-zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .graph-card canvas { width: 100% !important; max-height: 250px; cursor: grab; touch-action: none; }
 .graph-card canvas:active { cursor: grabbing; }
+.graph-card .spinner { display: none; width: 24px; height: 24px; border: 2px solid var(--border); border-top-color: var(--text-accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 2rem auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .card .value.approx { color: var(--color-off-grid); }
 .card .value .warn-icon { color: var(--color-off-grid); cursor: help; font-size: 0.85rem; margin-left: 0.25rem; }
 .empty-state { display: flex; align-items: center; justify-content: center; height: 100%;
@@ -544,6 +546,7 @@ function onSensorClick(name) {
     card.innerHTML = `
       <div class="graph-header">
         <div><span class="sensor-name">${name}</span> <span class="sensor-unit">${unit || ''}</span></div>
+      <div class="spinner" id="spinner-${id}"></div>
         <div>
           <button class="reset-zoom-btn" onclick="resetGraphZoom(${id})" title="Reset zoom">⟲</button>
           <button class="close-btn" onclick="closeGraph(${id})" title="Close graph">&times;</button>
@@ -586,6 +589,8 @@ async function refreshGraph(graph) {
   const datasets = [];
 
   for (const name of graph.sensorNames) {
+    const spinner = document.getElementById('spinner-' + graph.id);
+    if (spinner) spinner.style.display = 'block';
     try {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
@@ -600,6 +605,7 @@ async function refreshGraph(graph) {
     }
   }
 
+  if (spinner) spinner.style.display = 'none';
   if (graph.chart) {
     graph.chart.destroy();
     graph.chart = null;
