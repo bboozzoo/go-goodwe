@@ -385,6 +385,32 @@ func TestSampleAt(t *testing.T) {
 	assert.Equal(t, 60.0, *sample.Value)
 }
 
+func TestMigration_NoResetOnReopen(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// First open: migration creates tables with schema version 2.
+	s1, err := Open("sqlite://" + dbPath)
+	require.NoError(t, err)
+
+	// Set a cursor value so we can detect if migration resets it.
+	c, err := s1.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	c.LastProcessedSampleID = 42
+	require.NoError(t, s1.SaveVoltageAnalysisCursor(ctx, c))
+	require.NoError(t, s1.Close())
+
+	// Second open: migration should see schema version >= 2 and skip the DROP+CREATE.
+	s2, err := Open("sqlite://" + dbPath)
+	require.NoError(t, err)
+
+	// Cursor should still be 42, not reset to 0.
+	c2, err := s2.GetVoltageAnalysisCursor(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), c2.LastProcessedSampleID, "cursor should not be reset on reopen")
+	require.NoError(t, s2.Close())
+}
+
 func TestStringValueRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
