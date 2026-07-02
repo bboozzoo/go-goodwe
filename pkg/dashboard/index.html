@@ -588,9 +588,10 @@ async function refreshGraph(graph) {
   const params = timeRangeToParams(state.timeRange);
   const datasets = [];
 
+  const spinner = document.getElementById('spinner-' + graph.id);
+  if (spinner) spinner.style.display = 'block';
+
   for (const name of graph.sensorNames) {
-    const spinner = document.getElementById('spinner-' + graph.id);
-    if (spinner) spinner.style.display = 'block';
     try {
       const data = await fetchSensorData(name, params.since, params.until);
       const samples = data.samples || [];
@@ -611,6 +612,7 @@ async function refreshGraph(graph) {
     graph.chart = null;
   }
 
+  if (spinner) spinner.style.display = 'none';
   if (datasets.length === 0 || datasets.every(d => d.data.length === 0)) {
     // Show a 'no data' message instead of an empty chart.
     const card = document.getElementById(`graph-${graph.id}`);
