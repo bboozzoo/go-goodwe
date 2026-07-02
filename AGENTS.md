@@ -22,6 +22,9 @@
 - **Task Tracking**: Consult `TODO.md` for the current roadmap and pending items.
 - **Code Map**: See `TODO.md § 📁 Code Map` for a file-level overview of the codebase.
 - **Testing Strategy**: Refer to the Python test suite (`python/goodwe/tests/`) to understand expected behavior and protocol nuances.
+  - All new features and bug fixes must include unit tests using `github.com/stretchr/testify/assert` and `require`.
+  - Integration tests using real SQLite (`db.Open`) are preferred over pure mocks for DB-dependent logic.
+- **Database Migrations**: Schema changes are versioned using `PRAGMA user_version`. Always add a migration step in the `migrate()` function gated by a version check (`if sv < N { ... }`). Never run DROP/CREATE unconditionally on startup.
 
 
 ## PROTOCOL

@@ -86,6 +86,34 @@ Go implementation of a GoodWe inverter library with full sensor coverage matchin
 
 ---
 
+### Daemon — Voltage Quality Analysis
+- [x] `pkg/analysis/` — analysis engine for grid voltage events (IEC 60038: 207V–253V)
+- [x] DB tables: `voltage_analysis_cursor`, `voltage_events` with PRAGMA user_version schema tracking
+- [x] Incremental cursor-based processing using sensor_samples.rowid (not timestamps)
+- [x] Ongoing event detection across daemon restarts
+- [x] `GET /api/analysis/grid_voltage` with cursor-based pagination
+- [x] Daemon integration: runs after each poll cycle
+- [x] `-offline-analyze-voltage` companion mode for one-shot analysis
+- [x] `?delta=<timestamp>` parameter on aggregate endpoint for cumulative register deltas
+- [x] Dashboard: Grid Voltage view with infinite-scroll events table
+- [x] Multi-day integration test with real SQLite Store
+
+### Dashboard — UX Improvements
+- [x] Interactive zoom/pan with chartjs-plugin-zoom
+- [x] Manual drag-to-pan via Pointer Events (cross-browser)
+- [x] Visible max value per dataset in chart legend, updated on zoom/pan
+- [x] Consistent y-axis width for x-axis alignment across charts
+- [x] Daily energy cards (PV Today, Load Today, Grid Import/Export)
+- [x] Temperature card (radiator)
+- [x] Formula tooltips on system grid cards
+- [x] Sensor filter clear button
+- [x] Auto-load house_consumption and ppv_total on startup (6h default)
+
+### Server-Side
+- [x] Server-side downsampling for large time ranges (max 2000 points)
+- [x] `?delta=<timestamp>` for cumulative register delta queries
+- [x] PRAGMA user_version schema versioning for migrations
+
 ## 📋 Short-term — Easy Wins
 
 Data already within existing read windows or small isolated changes.
