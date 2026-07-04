@@ -3,7 +3,7 @@
 #
 # Entrypoint for the goodwe Docker image.
 #
-# If the first argument is "goodwe" or "goodwe-daemon", exec it directly
+# If the first argument is "goodwe", exec it directly. For "goodwe-daemon" with extra args, exec directly.
 # with the remaining arguments. This allows the container to be used as
 # either the CLI tool or the daemon.
 #
@@ -12,8 +12,15 @@
 set -e
 
 case "${1}" in
-  goodwe|goodwe-daemon)
+  goodwe)
     exec "$@"
+    ;;
+  goodwe-daemon)
+    # With extra arguments, run directly (e.g. -offline-analyze-voltage).
+    # Without extra arguments (default CMD), fall through to env-based mode.
+    if [ $# -gt 1 ]; then
+      exec "$@"
+    fi
     ;;
 esac
 
