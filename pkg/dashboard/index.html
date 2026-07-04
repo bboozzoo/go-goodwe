@@ -291,7 +291,7 @@ async function loadInfo() {
     document.getElementById('info-model').textContent = info.model || '-';
     document.getElementById('info-ip').textContent = info.inverter_ip || '-';
     document.getElementById('info-rated').textContent = info.rated_power ? info.rated_power + ' W' : '-';
-    document.getElementById('info-lastpoll').textContent = info.last_poll_time || '-';
+    document.getElementById('info-lastpoll').textContent = info.last_poll_time ? new Date(info.last_poll_time).toLocaleString() : '-';
     document.getElementById('info-daemon').textContent = info.daemon_version || '-';
     if (info.error) {
       document.getElementById('error-box').textContent = info.error;
