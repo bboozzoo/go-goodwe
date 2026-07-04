@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026, Maciej Borzecki <maciej.borzecki@gmail.com>
+# All rights reserved.
+#
+# Docker Compose example for goodwe-daemon.
+#
+# Usage:
+#   docker compose up -d
+#
+# Or with podman-compose:
+#   podman-compose up -d
+#
+# Environment variables matching the entrypoint.sh conventions:
+#   INVERTER_IP=<required>     IP address of the GoodWe inverter
+#   POLL_INTERVAL=<duration>   e.g. 30s, 1m
+#   LISTEN=<addr:port>         defaults to :8080
+#   DASHBOARD=true             enable embedded dashboard
+#   DEBUG=true                 enable debug logging
+#
+# The database is persisted in a named volume (goodwe-data).
+# To run voltage analysis offline:
+#   docker compose exec goodwe goodwe-daemon -offline-analyze-voltage
+
+services:
+  goodwe:
+    image: ghcr.io/bboozzoo/go-goodwe:latest
+    container_name: goodwe
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - goodwe-data:/var/lib/goodwe
+    environment:
+      - INVERTER_IP=192.168.4.82
+      - POLL_INTERVAL=30s
+      - LISTEN=:8080
+      - DASHBOARD=true
+      # - DEBUG=true   # uncomment for verbose logging
+
+volumes:
+  goodwe-data:

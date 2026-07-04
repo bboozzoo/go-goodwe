@@ -125,6 +125,18 @@ Or use the CLI tool:
 podman run --rm goodwe-daemon goodwe -version
 ```
 
+### Docker Compose
+
+A `docker-compose.yaml` is provided at the repository root for easy deployment:
+
+```sh
+docker compose up -d
+# or with podman:
+podman-compose up -d
+```
+
+Set the inverter IP and poll interval in the environment section before starting.
+
 ### Starting the Daemon
 
 Connect to an inverter and start the API server:
