@@ -101,6 +101,19 @@ type VoltageEvent struct {
 	DurationSeconds *int       `json:"duration_seconds,omitempty"`
 }
 
+// parseTimestamp parses a timestamp string returned by SQLite, trying
+// RFC3339 first then SQLite's native text format. Returns an error if
+// neither parses.
+func parseTimestamp(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", s); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("unparseable timestamp %q", s)
+}
+
 // Store provides access to the SQLite database.
 type Store struct {
 	db *sql.DB
@@ -315,6 +328,21 @@ func (s *Store) AggregateHourly(ctx context.Context, since, until time.Time) (in
 	start = start.Truncate(time.Hour)
 	end := until.Truncate(time.Hour)
 
+	// Clamp start to the earliest actual data so we don't iterate hundreds
+	// of thousands of empty hours from epoch when the destination table is
+	// empty. If there's no raw data at all, there's nothing to aggregate.
+	var minRaw sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(sampled_at) FROM sensor_samples`).Scan(&minRaw); err != nil {
+		slog.Warn("aggregate hourly: get min sampled_at, skipping clamp", "error", err)
+	} else if !minRaw.Valid {
+		return 0, nil
+	} else if minTime, perr := parseTimestamp(minRaw.String); perr != nil {
+		slog.Warn("aggregate hourly: parse min sampled_at, skipping clamp", "value", minRaw.String, "error", perr)
+	} else if floor := minTime.Truncate(time.Hour); start.Before(floor) {
+		start = floor
+	}
+
 	var total, iter int64
 	for t := start; t.Before(end); t = t.Add(time.Hour) {
 		iter++
@@ -375,6 +403,21 @@ func (s *Store) AggregateDaily(ctx context.Context, since, until time.Time) (int
 	// Round down to the day boundary.
 	start = start.Truncate(24 * time.Hour)
 	end := until.Truncate(24 * time.Hour)
+
+	// Clamp start to the earliest actual data so we don't iterate hundreds
+	// of thousands of empty days from epoch when the destination table is
+	// empty. If there's no hourly data at all, there's nothing to aggregate.
+	var minHourly sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(bucket_start) FROM sensor_samples_hourly`).Scan(&minHourly); err != nil {
+		slog.Warn("aggregate daily: get min bucket_start, skipping clamp", "error", err)
+	} else if !minHourly.Valid {
+		return 0, nil
+	} else if minTime, perr := parseTimestamp(minHourly.String); perr != nil {
+		slog.Warn("aggregate daily: parse min bucket_start, skipping clamp", "value", minHourly.String, "error", perr)
+	} else if floor := minTime.Truncate(24 * time.Hour); start.Before(floor) {
+		start = floor
+	}
 
 	var total, iter int64
 	for t := start; t.Before(end); t = t.AddDate(0, 0, 1) {
