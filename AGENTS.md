@@ -183,7 +183,7 @@ All responses include a `Goodwe-Daemon-Version` header with the build version.
 
 ### Database
 
-- SQLite via `modernc.org/sqlite` (pure Go, no CGO, WAL mode), `PRAGMA user_version` schema tracking (currently v3)
+- SQLite via `modernc.org/sqlite` (pure Go, no CGO, WAL mode), `PRAGMA user_version` schema tracking (currently v4)
 - Default location: `~/.goodwe/goodwe.db`
 - Schema versioning: all schema changes gated by `if sv < N` version checks in `migrate()`
 - Tables:

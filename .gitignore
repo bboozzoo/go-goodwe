@@ -6,3 +6,13 @@
 *.exe
 *.test
 *.out
+
+# Build artifacts
+goodwe-daemon-arm
+
+# Test data dumps
+data*.json
+
+# Plan ledger metadata (not part of the project)
+.plans/
+.taskman/

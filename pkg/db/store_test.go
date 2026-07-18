@@ -454,7 +454,7 @@ func TestMigration_VoltageTablesCreated(t *testing.T) {
 	var sv int
 	err = s.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
 	require.NoError(t, err)
-	assert.Equal(t, 3, sv, "schema version should be 3")
+	assert.Equal(t, 4, sv, "schema version should be 4")
 
 	// Verify cursor can be updated and re-read.
 	cursor.LastProcessedSampleID = 42
@@ -870,11 +870,11 @@ func TestMigration_OldSchemaUpgrade(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Schema version should be 3.
+	// Schema version should be 4.
 	var sv int
 	err = s2.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
 	require.NoError(t, err)
-	assert.Equal(t, 3, sv, "schema version should be 3")
+	assert.Equal(t, 4, sv, "schema version should be 4")
 
 	// Cursor should be reset.
 	cursor, err := s2.GetVoltageAnalysisCursor(ctx)
@@ -897,4 +897,110 @@ func TestMigration_OldSchemaUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cursor2)
 	assert.Equal(t, int64(7), cursor2.LastProcessedSampleID)
+}
+
+func TestMigration_v4_SamplesTimeIndexCreated(t *testing.T) {
+	s := newTestStore(t)
+
+	// Fresh store should be at schema version 4.
+	var sv int
+	err := s.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sv, "fresh database should be at schema v4")
+
+	// idx_samples_time should exist on sensor_samples(sampled_at).
+	var cnt int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='sensor_samples' AND name='idx_samples_time'`).Scan(&cnt)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cnt, "idx_samples_time index should exist")
+}
+
+func TestMigration_v4_UpgradeFromV3(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "v3_upgrade.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	// Create schema matching v3: sensor_samples + aggregate tables + idx_samples_name_time.
+	_, err = rawDB.Exec(`
+		CREATE TABLE IF NOT EXISTS sensor_samples (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			sensor_name TEXT NOT NULL,
+			value      REAL,
+			value_text TEXT,
+			unit       TEXT NOT NULL DEFAULT '',
+			sampled_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_samples_name_time ON sensor_samples(sensor_name, sampled_at);
+		CREATE TABLE IF NOT EXISTS sensor_samples_hourly (
+			sensor_name TEXT NOT NULL,
+			bucket_start TIMESTAMP NOT NULL,
+			value_min REAL,
+			value_max REAL,
+			value_avg REAL,
+			sample_count INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (sensor_name, bucket_start)
+		) WITHOUT ROWID;
+		CREATE TABLE IF NOT EXISTS sensor_samples_daily (
+			sensor_name TEXT NOT NULL,
+			bucket_start TIMESTAMP NOT NULL,
+			value_min REAL,
+			value_max REAL,
+			value_avg REAL,
+			sample_count INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (sensor_name, bucket_start)
+		) WITHOUT ROWID;
+		PRAGMA user_version = 3;
+	`)
+	require.NoError(t, err)
+	_ = rawDB.Close()
+
+	// Open via migration — should upgrade to v4.
+	s2, err := Open("sqlite://" + dbPath)
+	require.NoError(t, err)
+	defer func() { _ = s2.Close() }()
+
+	var sv int
+	err = s2.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sv, "v3 database should be upgraded to v4")
+
+	var cnt int
+	err = s2.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='sensor_samples' AND name='idx_samples_time'`).Scan(&cnt)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cnt, "idx_samples_time should exist after v3→v4 upgrade")
+}
+
+func TestAggregateHourlyUsesSamplesTimeIndex(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Insert a sample so the table has rows (EXPLAIN QUERY PLAN still works
+	// on empty tables, but a sample makes the plan more representative).
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	err := s.InsertSample(ctx, "battery_soc", "%", now, samplePtr(50.0), nil)
+	require.NoError(t, err)
+
+	// Run EXPLAIN QUERY PLAN on the exact query shape used by AggregateHourly.
+	start := now.Add(-time.Hour)
+	end := now.Add(time.Hour)
+	rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT sensor_name,
+		MIN(value), MAX(value), AVG(value), COUNT(*) FROM sensor_samples
+		WHERE sampled_at >= ? AND sampled_at < ? AND value IS NOT NULL GROUP BY sensor_name`,
+		start, end)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	foundIndex := false
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		err := rows.Scan(&id, &parent, &notused, &detail)
+		require.NoError(t, err)
+		if strings.Contains(detail, "idx_samples_time") {
+			foundIndex = true
+		}
+	}
+	require.NoError(t, rows.Err())
+	assert.True(t, foundIndex, "EXPLAIN QUERY PLAN should show idx_samples_time index usage")
 }

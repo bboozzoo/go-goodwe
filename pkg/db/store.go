@@ -815,6 +815,15 @@ func migrate(db *sql.DB) error {
 		_, _ = db.Exec(`PRAGMA user_version = 3`)
 	}
 
+	// v4: bare sampled_at index so AggregateHourly's per-bucket SELECT
+	// (filters sampled_at alone) can seek instead of full-scanning the raw
+	// table. Idempotent; large databases block here once during build.
+	if schemaVersion < 4 {
+		slog.Info("Creating sampled_at index (large databases may take a minute)")
+		_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_samples_time ON sensor_samples(sampled_at)`)
+		_, _ = db.Exec(`PRAGMA user_version = 4`)
+	}
+
 	// Re-read version for logging.
 	var finalVersion int
 	_ = db.QueryRow(`PRAGMA user_version`).Scan(&finalVersion)
