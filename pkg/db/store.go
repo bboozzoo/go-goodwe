@@ -40,6 +40,31 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// pct returns a progress percentage string for current/total, guarding against
+// a zero total to avoid division by zero.
+func pct(current, total int64) string {
+	if total <= 0 {
+		return "0.0%"
+	}
+	return fmt.Sprintf("%.1f%%", float64(current)/float64(total)*100)
+}
+
+// eta estimates the remaining wall-clock time given the elapsed time, the
+// current iteration index, and the total number of iterations. Returns "-" when
+// there's not enough data to make an estimate.
+func eta(begin time.Time, current, total int64) string {
+	if current <= 0 || total <= 0 || current >= total {
+		return "-"
+	}
+	elapsed := time.Since(begin)
+	if elapsed <= 0 {
+		return "-"
+	}
+	remaining := total - current
+	rate := elapsed / time.Duration(current)
+	return (rate * time.Duration(remaining)).Round(time.Second).String()
+}
+
 // InverterIdentity holds the stored identity of the inverter.
 type InverterIdentity struct {
 	Serial     string
@@ -343,6 +368,8 @@ func (s *Store) AggregateHourly(ctx context.Context, since, until time.Time) (in
 		start = floor
 	}
 
+	totalBuckets := int64(end.Sub(start) / time.Hour)
+	begin := time.Now()
 	var total, iter int64
 	for t := start; t.Before(end); t = t.Add(time.Hour) {
 		iter++
@@ -365,7 +392,12 @@ func (s *Store) AggregateHourly(ctx context.Context, since, until time.Time) (in
 		n, _ := result.RowsAffected()
 		total += n
 		if iter%100 == 0 {
-			slog.Info("Aggregating hourly", "bucket", t.Format(time.RFC3339), "rows_so_far", total)
+			slog.Info("Aggregating hourly",
+				"bucket", fmt.Sprintf("%d/%d", iter, totalBuckets),
+				"time", t.Format(time.RFC3339),
+				"pct", pct(iter, totalBuckets),
+				"eta", eta(begin, iter, totalBuckets),
+				"rows_so_far", total)
 		}
 		// Check for context cancellation between hours.
 		select {
@@ -419,6 +451,8 @@ func (s *Store) AggregateDaily(ctx context.Context, since, until time.Time) (int
 		start = floor
 	}
 
+	totalBuckets := int64(end.Sub(start) / (24 * time.Hour))
+	begin := time.Now()
 	var total, iter int64
 	for t := start; t.Before(end); t = t.AddDate(0, 0, 1) {
 		iter++
@@ -440,7 +474,12 @@ func (s *Store) AggregateDaily(ctx context.Context, since, until time.Time) (int
 		n, _ := result.RowsAffected()
 		total += n
 		if iter%100 == 0 {
-			slog.Info("Aggregating daily", "bucket", t.Format(time.RFC3339), "rows_so_far", total)
+			slog.Info("Aggregating daily",
+				"bucket", fmt.Sprintf("%d/%d", iter, totalBuckets),
+				"time", t.Format(time.RFC3339),
+				"pct", pct(iter, totalBuckets),
+				"eta", eta(begin, iter, totalBuckets),
+				"rows_so_far", total)
 		}
 		select {
 		case <-ctx.Done():
@@ -473,6 +512,18 @@ func (s *Store) PruneSamples(ctx context.Context, before time.Time, batchSize in
 		return 0, fmt.Errorf("prune samples: rows: %w", err)
 	}
 
+	// Count total rows to delete so progress can report a percentage. Uses the
+	// sampled_at index and is fast even on large tables.
+	var toDelete int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sensor_samples WHERE sampled_at < ?`, before).Scan(&toDelete); err != nil {
+		slog.Warn("prune samples: count rows, skipping pct", "error", err)
+	}
+	if toDelete > 0 {
+		slog.Info("Pruning raw samples", "total", toDelete, "older_than", before)
+	}
+
+	begin := time.Now()
 	var total int64
 	for _, name := range names {
 		for {
@@ -492,7 +543,11 @@ func (s *Store) PruneSamples(ctx context.Context, before time.Time, batchSize in
 			}
 			total += n
 			if (total / 1000) > ((total - n) / 1000) {
-				slog.Info("Pruning samples", "deleted_so_far", total, "sensor", name)
+				slog.Info("Pruning samples",
+					"sensor", name,
+					"deleted_so_far", total,
+					"pct", pct(total, toDelete),
+					"eta", eta(begin, total, toDelete))
 			}
 		}
 		select {
@@ -507,6 +562,17 @@ func (s *Store) PruneSamples(ctx context.Context, before time.Time, batchSize in
 // PruneHourly batch-deletes hourly aggregate rows older than the given time.
 // Uses the composite PK for batching since sensor_samples_hourly is WITHOUT ROWID.
 func (s *Store) PruneHourly(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	// Count total rows to delete so progress can report a percentage.
+	var toDelete int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sensor_samples_hourly WHERE bucket_start < ?`, before).Scan(&toDelete); err != nil {
+		slog.Warn("prune hourly: count rows, skipping pct", "error", err)
+	}
+	if toDelete > 0 {
+		slog.Info("Pruning hourly aggregates", "total", toDelete, "older_than", before)
+	}
+
+	begin := time.Now()
 	var total int64
 	for {
 		result, err := s.db.ExecContext(ctx,
@@ -526,7 +592,10 @@ func (s *Store) PruneHourly(ctx context.Context, before time.Time, batchSize int
 		}
 		total += n
 		if (total / 1000) > ((total - n) / 1000) {
-			slog.Info("Pruning hourly aggregates", "deleted_so_far", total)
+			slog.Info("Pruning hourly aggregates",
+				"deleted_so_far", total,
+				"pct", pct(total, toDelete),
+				"eta", eta(begin, total, toDelete))
 		}
 		select {
 		case <-ctx.Done():
