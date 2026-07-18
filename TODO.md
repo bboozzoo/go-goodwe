@@ -196,16 +196,16 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/db/store.go` — `InsertSample`, `QueryRawSamples`, `LastSampleTime`, `LatestSample` | Done |
 | `pkg/db/store.go` — `PurgeBadSamples` (data sanitization) | Done |
 | `pkg/db/store.go` — `sensor_samples` + `inverter_identity` tables + migration | Done |
-| `pkg/db/store.go` — `BeginTx`/transactional batching | Pending |
-| `pkg/db/store.go` — `QueryAggregated` (hourly/daily) | Pending |
-| `pkg/db/store.go` — `RunHourlyAggregation`, `RunDailyAggregation` | Pending |
-| `pkg/db/store.go` — `PurgeRawSamples`, `PurgeHourlySamples` | Pending |
+| `pkg/db/store.go` — `QueryAggregatedSamples` (hourly/daily) | Done |
+| `pkg/db/store.go` — `AggregateHourly`, `AggregateDaily` | Done |
+| `pkg/db/store.go` — `PruneSamples`, `PruneHourly` | Done |
+| `pkg/db/store.go` — `sensor_samples_hourly` + `sensor_samples_daily` tables + migration (v3) | Done |
 | `pkg/daemon/daemon.go` — Poll loop with `GetSensors` + `InsertSample` | Done |
 | `pkg/daemon/daemon.go` — Identity verification (`verifyIdentity`) | Done |
 | `pkg/daemon/daemon.go` — `InverterConnState` tracking | Done |
 | `pkg/daemon/daemon.go` — Inverter reconnection on failure (state machine with backoff) | Done |
 | `pkg/daemon/daemon.go` — Gap backfill on startup | Pending |
-| `pkg/daemon/daemon.go` — Hourly/daily aggregation triggers | Pending |
+| `pkg/daemon/daemon.go` — Background aggregation scheduler (`aggregationLoop`, `doAggregate`) | Done |
 | `pkg/api/handler.go` — Routes: health, sensors, info, data, aggregate | Done |
 | `pkg/api/handler.go` — `?latest=true` support on aggregate endpoint | Done |
 | `pkg/api/handler.go` — `/api/info` served from database (no inverter hit) | Done |
@@ -213,7 +213,11 @@ exposes a REST API + embedded JS dashboard.
 | `pkg/api/handler.go` — CORS + request logging middleware | Done |
 | `pkg/api/handler.go` — `DaemonStatus` interface | Done |
 | `pkg/api/handler.go` — `SensorStore` interface | Done |
-| `pkg/api/handler.go` — Purge endpoints (DELETE/POST) | Pending |
+| `pkg/api/handler.go` — `bucket=hour/day` parameter on aggregate endpoint | Done |
+| `pkg/api/handler.go` — `QueryAggregatedSamples` in `SensorStore` interface | Done |
+| `pkg/api/handler.go` — `Goodwe-Daemon-Version` response header | Done |
+| `pkg/api/handler.go` — `daemon_version` field in `/api/info` response | Done |
+| `pkg/api/handler.go` — `ConnError()` surfaced in `/api/info` DB path | Done |
 | `cmd/goodwe-daemon/main.go` — Flag parsing, DB, discovery, HTTP + poll | Done |
 | `cmd/goodwe-daemon/main.go` — Graceful shutdown (15s timeout) | Done |
 | `pkg/dashboard/` — Embedded HTML+JS single-page app | Done |
@@ -360,18 +364,18 @@ Steps 1, 3, 4, 6, 7, 8 are largely complete; remaining sub-items are listed belo
    - `BeginTx(ctx) (*Tx, error)` — ❌ not yet implemented
    - `InsertSample(ctx, name, value, unit, t time.Time) error` — ✅ implemented (auto-commit only)
    - `QuerySamples(ctx, name string, since, until time.Time, limit int) ([]Sample, error)` — ✅ (`QueryRawSamples`)
-   - `QueryAggregated(ctx, name, bucket string, since, until time.Time) ([]Aggregate, error)` — ❌ pending
-   - `RunHourlyAggregation(ctx) error` — ❌ pending
-   - `RunDailyAggregation(ctx) error` — ❌ pending
-   - `PurgeRawSamples(ctx, before time.Time) error` — ❌ pending
-   - `PurgeHourlySamples(ctx, before time.Time) error` — ❌ pending
+   - `QueryAggregatedSamples(ctx, name, since, until, bucket) ([]AggregatedSample, error)` — ✅ done (bucket=hour/day)
+   - `AggregateHourly(ctx, since, until) error` — ✅ done
+   - `AggregateDaily(ctx, since, until) error` — ✅ done
+   - `PruneSamples(ctx, before, batchSize) (int64, error)` — ✅ done
+   - `PruneHourly(ctx, before, batchSize) (int64, error)` — ✅ done
 3. **Create `pkg/daemon/daemon.go`** — ✅ done (including state machine with
    backoff and reconnection), missing sub-items:
    - Wrap poll inserts in `BeginTx()/Commit()` — ❌ currently single inserts
    - Gap backfill on startup (`LastSampleTime`) — ❌ not wired
-   - Hourly/daily aggregation triggers — ❌ pending
+   - Background aggregation scheduler (`aggregationLoop`, `doAggregate`) — ✅ done
 4. **Create `pkg/api/handler.go`** — ✅ routes done, missing:
-   - Purge endpoints — ❌ pending
+   - `bucket=hour/day` parameter on aggregate endpoint — ✅ done
 5. **Create `pkg/dashboard/`** — ✅ done with full single-page app
 6. **Create `cmd/goodwe-daemon/main.go`** — ✅ done
 7. **Integration with existing code** — ✅ done

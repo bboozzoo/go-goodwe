@@ -107,8 +107,8 @@ and exposes a REST API + embedded JS dashboard.
 
 The daemon poll loop implements an explicit state machine with backoff:
 
-    disconnected -> doConnect()
-      |-- success -> Connected -> doPoll()
+    disconnected -> doConnect() -> Connecting
+      |-- success -> Connected -> doPoll() (immediately after reconnect)
       |                |-- success -> wait(pollInterval) -> Connected
       |                |-- error   -> close connection -> Disconnected
       |-- error   -> wait(backoff, doubling 5s->10s->...->5min) -> Disconnected
@@ -117,51 +117,100 @@ States: Disabled (no inverter), Disconnected (will retry), Connecting (in progre
 Connected (verified), Failed (serial mismatch, permanent stop).
 State is exposed via `DaemonStatus` interface for the API handler.
 
+On a successful reconnect, the daemon polls immediately rather than waiting
+for the next poll interval tick — the fresh connection has a high probability
+of a successful read.
+
+When a DTLS dial fails, the daemon sends a cleartext UDP probe to port 48899
+(`discovery.Ping`) to distinguish a broken dongle DTLS server from a completely
+unreachable inverter. The probe result is logged at WARN level with a
+specific message.
+
+### Background Aggregation and Retention
+
+The daemon runs a background goroutine (`aggregationLoop`) that periodically
+aggregates raw samples into hourly and daily summary tables and prunes old data.
+Configurable via `-aggregate-interval` (default 1h) and `-retention-days`
+(default 30). Set either to 0 to disable.
+
+**Retention defaults:**
+
+| Data | Retention | Approx. size |
+|------|-----------|--------------|
+| Raw samples | 30 days | ~1 GB |
+| Hourly aggregates | 365 days | ~100 MB |
+| Daily aggregates | forever | ~4 MB/year |
+
+Aggregation runs before pruning to guarantee no data loss. One-shot CLI
+commands (`-aggregate`, `-aggregate-backfill`, `-prune`) allow manual recovery
+of a bloated database before restarting the daemon.
+
 ### Connection Transport
 
 - `et/tcp_transport.go`: Plain TCP + Modbus TCP framing (MBAP header, port 502)
 - `et/dtls_transport.go`: DTLS + Modbus RTU framing (UDP, port 8899)
 - Both auto-reconnect on closed connections with read/write deadlines (5s DTLS, 10s TCP)
+- `et/transport.go`: `Transport` interface (`Connect`, `Close`, `ReadRegisters`)
+- `discovery/discover.go`: `Ping()` for connectivity diagnostics (UDP probe to port 48899)
 
 ### Packages
 
 | Package | Purpose |
 |---------|---------|
 | `cmd/goodwe-daemon/` | Entrypoint: flag parsing, DB init, HTTP + poll loop orchestration |
-| `pkg/daemon/` | Poll loop with state machine, identity verification, DB backfill |
-| `pkg/db/` | SQLite store: schema, migrations, samples, identity, sanitization |
-| `pkg/api/` | HTTP handler, routes (health/info/sensors/data), CORS, gzip, logging |
-| `pkg/dashboard/` | Embedded single-page HTML+JS dashboard (Chart.js, dark theme) |
+| `pkg/daemon/` | Poll loop with state machine, identity verification, aggregation scheduler |
+| `pkg/db/` | SQLite store: schema, migrations, samples, identity, aggregation, pruning |
+| `pkg/api/` | HTTP handler, routes (health/info/sensors/data/analysis), CORS, gzip, logging |
+| `pkg/analysis/` | Grid voltage quality analysis engine (IEC 60038: 207V–253V) |
+| `pkg/dashboard/` | Embedded single-page HTML+JS dashboard (Chart.js, light/dark theme) |
+| `discovery/` | UDP probe-based inverter discovery and `Ping()` connectivity check |
+| `et/` | Modbus transport (TCP, DTLS), sensor registries, protocol framing |
 
 ### REST API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Service health: `{status, inverter: {connected, error}}` |
-| `GET` | `/api/info` | Inverter identity from DB: `{serial, model, firmware, rated_power, last_poll_time}` |
+| `GET` | `/api/info` | Inverter identity from DB: `{serial, model, firmware, rated_power, last_poll_time, daemon_version, error}` |
 | `GET` | `/api/sensors` | List all 199 sensors: `[{name, category}, ...]` |
 | `GET` | `/api/data/{sensor}` | Live Modbus read: `{name, value, unit, timestamp}` |
-| `GET` | `/api/data/{sensor}/aggregate` | Historical from DB: `?since=&until=&limit=&latest=&delta=` |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical from DB: `?since=&until=&limit=&latest=&delta=&bucket=hour/day` |
 | `GET` | `/api/analysis/grid_voltage` | Voltage quality events: `?before=&limit=` |
+
+All responses include a `Goodwe-Daemon-Version` header with the build version.
 | `GET` | `/dashboard` | Single-page dashboard |
 | `GET` | `/` | Redirect to `/dashboard` |
 
 ### Database
 
-- SQLite via `modernc.org/sqlite` (pure Go, no CGO, WAL mode)
+- SQLite via `modernc.org/sqlite` (pure Go, no CGO, WAL mode), `PRAGMA user_version` schema tracking (currently v3)
 - Default location: `~/.goodwe/goodwe.db`
-- Tables: `inverter_identity` (serial, model, firmware, versions, rated_power),
-  `sensor_samples` (raw readings with dual value/value_text columns)
+- Schema versioning: all schema changes gated by `if sv < N` version checks in `migrate()`
+- Tables:
+  - `inverter_identity` (serial, model, firmware, dsp/arm versions, rated_power)
+  - `sensor_samples` (raw readings with dual value/value_text columns)
+  - `sensor_samples_hourly` (WITHOUT ROWID: per-sensor, per-hour min/max/avg/count)
+  - `sensor_samples_daily` (WITHOUT ROWID: per-sensor, per-day min/max/avg/count)
+  - `voltage_events` / `voltage_analysis_cursor` (grid voltage quality analysis)
 - Data sanitization at startup: purges physically impossible values based on unit
   (e.g., W > rated_power*2, % > 100 or < 0, V > 600, A > 50)
+- Aggregate tables use `WITHOUT ROWID` so the primary key IS the clustered index —
+  no separate index needed
 - Readable concurrently during writes via WAL mode
 
 ### Dashboard
 
 - Single HTML file at `/dashboard`
-- Chart.js from CDN, dark theme (slate/blue palette)
+- Chart.js from CDN, light/dark theme toggle (CSS custom properties, saved to localStorage)
 - Sensor list sidebar with search filter, grouped by category
 - Line charts with time range selector (1h, 6h, 24h, 7d, 30d)
+  - 1h/6h/24h: raw samples from `sensor_samples`
+  - 7d: hourly aggregates (`bucket=hour`)
+  - 30d: daily aggregates (`bucket=day`)
 - Inserted null waypoints break lines at time gaps > 10 minutes
+- X-axis pinned to exact time window boundaries (no padding on sides)
 - Live mode toggle (auto-refresh every 5s)
-- System status cards (grid mode, PV power, battery SoC, errors)
+- System status cards (grid mode, PV power, battery SoC, errors, temperature)
+- Daily energy cards (PV production, grid import/export, load today)
+- Grid voltage events table with infinite scroll
+- Header shows daemon version, inverter identity, last poll time, connected state
