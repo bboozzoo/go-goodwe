@@ -285,6 +285,8 @@ async function fetchJSON(url) {
 }
 
 async function loadInfo() {
+  // Clear any previous error so transient failures don't leave stale error display.
+  document.getElementById('error-box').style.display = 'none';
   try {
     const info = await fetchJSON('/api/info');
     document.getElementById('info-serial').textContent = info.serial || '-';
