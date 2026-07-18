@@ -112,6 +112,8 @@ Available environment variables:
 | `DB_STORE` | `sqlite:///var/lib/goodwe/goodwe.db` | Database path |
 | `DASHBOARD` | `false` | Set to `true` to enable the embedded dashboard |
 | `DEBUG` | `false` | Set to `true` for debug logging |
+| `RETENTION_DAYS` | `30` | Number of days of raw data to keep (0 = disable pruning) |
+| `AGGREGATE_INTERVAL` | `1h` | Background aggregation interval (0 = disabled) |
 
 The entrypoint also supports running commands inside the container. For example, to run voltage analysis offline:
 
@@ -162,10 +164,60 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 | `-dbstore` | `"sqlite://~/.goodwe/goodwe.db"` | Database connection string (e.g. `sqlite:///var/lib/goodwe/history.db`) |
 | `-poll` | `"0"` (disabled) | Sensor poll interval (e.g. `30s`, `1m`; minimum 5s) |
 | `-dashboard` | `false` | Enable the embedded JS dashboard at `/dashboard` |
+| `-aggregate` | `false` | One-shot: aggregate pending raw data into hourly/daily tables and exit |
+| `-aggregate-backfill` | `false` | One-shot: aggregate ALL raw data into hourly/daily tables and exit |
+| `-prune` | `false` | One-shot: delete raw samples older than `-retention-days` and exit |
+| `-retention-days` | `30` | Number of days of raw data to keep (used with `-prune` and background pruning) |
+| `-aggregate-interval` | `1h` | How often to run background aggregation (`0` = disabled) |
 | `-purge` | `""` | One-shot: purge all data older than this date and exit (e.g. `2026-01-01`) |
 | `-debug` | `false` | Enable debug logging |
 | `-version` | `false` | Display version information and exit |
 | `-offline-analyze-voltage` | `false` | Run voltage analysis on the DB once and exit |
+
+### Database Maintenance
+
+The daemon stores raw sensor samples every poll cycle. Over time the database
+grows large (roughly 1 GB per month at 30 s polling with 199 sensors). To keep
+the size manageable, the daemon aggregates raw data into hourly and daily
+summary tables and prunes old raw data automatically.
+
+**Retention defaults** (configurable via `-retention-days` and `-aggregate-interval`):
+
+| Data | Retention | Approx. size |
+|------|-----------|--------------|
+| Raw samples | 30 days | ~1 GB |
+| Hourly aggregates | 365 days | ~100 MB |
+| Daily aggregates | forever | ~4 MB/year |
+
+If the database has grown large (e.g. from a period without aggregation), you can
+recover it manually before restarting the daemon:
+
+```sh
+# 1. Backfill ALL existing raw data into hourly/daily aggregate tables.
+#    This may take a while on a large database.
+$ ./goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -aggregate-backfill
+
+# 2. Prune old raw samples (keep the last 30 days).
+$ ./goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -prune -retention-days 30
+
+# 3. Start the daemon normally. Background aggregation runs every hour
+#    and pruning keeps raw data within the retention window.
+$ ./goodwe-daemon -inverterip 192.168.4.82 -poll 30s -dashboard
+```
+
+To run a quick incremental aggregation (only unaggregated data since the last
+run) without a full backfill:
+
+```sh
+$ ./goodwe-daemon -dbstore sqlite://~/.goodwe/goodwe.db -aggregate
+```
+
+After pruning, the SQLite file does not shrink automatically. To reclaim disk
+space, run a one-time VACUUM (requires free space equal to the database size):
+
+```sh
+$ sqlite3 ~/.goodwe/goodwe.db 'VACUUM;'
+```
 
 ### API Endpoints
 
@@ -175,7 +227,7 @@ $ ./goodwe-daemon -listen :8080 -inverterip 192.168.4.82 \
 | `GET` | `/api/info` | Inverter information |
 | `GET` | `/api/sensors` | List of available sensors |
 | `GET` | `/api/data/{sensor}` | Live sensor reading |
-| `GET` | `/api/data/{sensor}/aggregate` | Historical sensor data from DB: `?since=&until=&limit=&latest=&delta=` |
+| `GET` | `/api/data/{sensor}/aggregate` | Historical sensor data from DB: `?since=&until=&limit=&latest=&delta=&bucket=` |
 | `GET` | `/api/analysis/grid_voltage` | Voltage events: `?before=&limit=` |
 | `GET` | `/dashboard` | Embedded dashboard (WIP) |
 
@@ -239,8 +291,10 @@ $ curl -s http://localhost:8080/api/data/battery_soc
 ```
 
 **`GET /api/data/{sensor}/aggregate`** — Historical samples from the database.
-Supports `?since=` and `?until=` (RFC 3339), `?limit=` (default 1000), and
-`?latest=true` to retrieve only the most recent sample:
+Supports `?since=` and `?until=` (RFC 3339), `?limit=` (default 1000),
+`?latest=true` to retrieve only the most recent sample, and `?bucket=hour`
+or `?bucket=day` to query pre-aggregated hourly/daily summary tables instead
+of raw samples (used automatically by the dashboard for 7 d and 30 d ranges):
 
 ```sh
 # Last 24 hours (default)
