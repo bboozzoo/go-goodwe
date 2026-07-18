@@ -144,6 +144,17 @@ type Store struct {
 	db *sql.DB
 }
 
+// Vacuum rebuilds the database file, reclaiming free pages left behind by
+// DELETEs. It requires an exclusive lock on the database and temporarily
+// needs roughly as much free disk as the current database file size. It is
+// best-effort: callers should treat failure as non-fatal.
+func (s *Store) Vacuum(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, "VACUUM"); err != nil {
+		return fmt.Errorf("vacuum: %w", err)
+	}
+	return nil
+}
+
 // Open opens (or creates) the SQLite database at the given DSN.
 // DSN format: sqlite:///path/to/file.db
 func Open(dsn string) (*Store, error) {

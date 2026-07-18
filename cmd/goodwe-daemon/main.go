@@ -85,6 +85,7 @@ func main() {
 	aggregateBackfill := flag.Bool("aggregate-backfill", false, "One-shot: aggregate ALL raw data into hourly/daily tables and exit")
 	prune := flag.Bool("prune", false, "One-shot: delete raw samples older than -retention-days and exit")
 	retentionDays := flag.Int("retention-days", 30, "Number of days of raw data to keep (used with -prune and background pruning)")
+	noVacuum := flag.Bool("no-vacuum", false, "Skip VACUUM after -prune (use if another process holds the DB open or disk space is tight)")
 	aggregateInterval := flag.Duration("aggregate-interval", time.Hour, "How often to run aggregation (0 = disabled)")
 	flag.Parse()
 
@@ -184,6 +185,24 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("Pruned hourly aggregates", "count", deletedHourly)
+
+		// VACUUM reclaims disk space freed by the deletes. It requires an
+		// exclusive lock on the DB, so skip it if another process (e.g. a
+		// running daemon) may hold the DB open, or if disk space is tight
+		// (VACUUM temporarily needs ~1x the DB size to build the new copy).
+		// Only run it if we actually deleted rows — vacuuming a no-op prune
+		// wastes time.
+		if !*noVacuum && (deleted > 0 || deletedHourly > 0) {
+			slog.Info("VACUUMing database to reclaim space (this may take a minute)")
+			vacStart := time.Now()
+			if err := store.Vacuum(ctx); err != nil {
+				slog.Warn("VACUUM failed (prune already succeeded; space not reclaimed)",
+					"error", err,
+					"hint", "ensure no other process holds the DB open and retry, or run with -no-vacuum")
+			} else {
+				slog.Info("VACUUM complete", "elapsed", time.Since(vacStart).Round(time.Millisecond))
+			}
+		}
 
 		os.Exit(0)
 	}

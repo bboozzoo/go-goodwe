@@ -761,6 +761,47 @@ func TestPruneSamples(t *testing.T) {
 	assert.Equal(t, 300.0, *samplesB[0].Value)
 }
 
+func TestVacuum(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Insert a batch of old samples (2 hours ago) then delete them to leave
+	// free pages. Using a fixed old timestamp and a cutoff well in the
+	// middle avoids ambiguity about which rows survive the prune.
+	for i := 0; i < 50; i++ {
+		require.NoError(t, s.InsertSample(ctx, "sensor_a", "V",
+			now.Add(-2*time.Hour).Add(time.Duration(i)*time.Minute), samplePtr(float64(i)), nil))
+	}
+	deleted, err := s.PruneSamples(ctx, now.Add(-1*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Greater(t, deleted, int64(0), "prune should delete rows")
+
+	// page_count reflects free pages from the deletes. VACUUM should not
+	// error and should leave the DB usable.
+	pagesBefore := pageCount(t, s)
+	require.NoError(t, s.Vacuum(ctx))
+	pagesAfter := pageCount(t, s)
+	assert.LessOrEqual(t, pagesAfter, pagesBefore,
+		"VACUUM should not increase the page count")
+
+	// DB is still usable after VACUUM.
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", now.Add(-30*time.Minute), samplePtr(42.0), nil))
+	samples, err := s.QueryRawSamples(ctx, "sensor_a", now.Add(-time.Hour), now, 100)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	require.NotNil(t, samples[0].Value)
+	assert.Equal(t, 42.0, *samples[0].Value)
+}
+
+func pageCount(t *testing.T, s *Store) int {
+	t.Helper()
+	var n int
+	require.NoError(t, s.db.QueryRow(`PRAGMA page_count`).Scan(&n))
+	return n
+}
+
 func TestQueryAggregated(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
