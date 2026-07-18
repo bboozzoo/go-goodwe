@@ -53,6 +53,9 @@ type Daemon struct {
 	inverterIP   string          // IP address of the inverter, for diagnostics
 	pollInterval time.Duration   // zero means no polling
 
+	aggregateInterval time.Duration // zero = disabled
+	retentionDays     int            // 0 = no pruning
+
 	mu               sync.RWMutex
 	connState        api.InverterConnState
 	connErr          error
@@ -62,12 +65,14 @@ type Daemon struct {
 
 // New creates a new Daemon. inverter and store may be nil; the poll loop
 // is a no-op until an inverter is provided. pollInterval of 0 disables polling.
-func New(inverter goodwe.Inverter, store *db.Store, inverterIP string, pollInterval time.Duration) *Daemon {
+func New(inverter goodwe.Inverter, store *db.Store, inverterIP string, pollInterval time.Duration, aggregateInterval time.Duration, retentionDays int) *Daemon {
 	d := &Daemon{
-		inverter:     inverter,
-		store:        store,
-		inverterIP:   inverterIP,
-		pollInterval: pollInterval,
+		inverter:          inverter,
+		store:             store,
+		inverterIP:        inverterIP,
+		pollInterval:      pollInterval,
+		aggregateInterval: aggregateInterval,
+		retentionDays:     retentionDays,
 	}
 	if inverter == nil {
 		d.connState = api.InverterStateDisabled
@@ -132,10 +137,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return nil
 	}
 
+	d.doStartupAggregation(ctx)
+
 	slog.Info("Poll loop started", "interval", d.pollInterval)
 	defer slog.Info("Poll loop stopped")
 
 	d.setState(api.InverterStateDisconnected, nil)
+
+	go d.aggregationLoop(ctx)
 
 	backoff := backoffInitial
 	timer := time.NewTimer(0) // fire immediately for first connect
@@ -362,6 +371,114 @@ func (d *Daemon) verifyIdentity(ctx context.Context) error {
 		slog.Warn("Failed to purge bad samples", "error", err)
 	}
 	return nil
+}
+
+// doStartupAggregation runs aggregation and pruning once at startup to ensure
+// the database is in a consistent state, regardless of the background
+// aggregation interval setting. It blocks until complete.
+func (d *Daemon) doStartupAggregation(ctx context.Context) {
+	if d.store == nil {
+		return
+	}
+	slog.Info("Running startup aggregation...")
+	now := time.Now().UTC()
+
+	hourlyCount, err := d.store.AggregateHourly(ctx, time.Time{}, now)
+	if err != nil {
+		slog.Warn("Startup hourly aggregation failed", "error", err)
+		return
+	}
+	slog.Info("Aggregated hourly buckets", "count", hourlyCount)
+
+	dailyCount, err := d.store.AggregateDaily(ctx, time.Time{}, now)
+	if err != nil {
+		slog.Warn("Startup daily aggregation failed", "error", err)
+		return
+	}
+	slog.Info("Aggregated daily buckets", "count", dailyCount)
+
+	if d.retentionDays > 0 {
+		rawCutoff := now.AddDate(0, 0, -d.retentionDays)
+		deleted, err := d.store.PruneSamples(ctx, rawCutoff, 1000)
+		if err != nil {
+			slog.Warn("Startup prune samples failed", "error", err)
+		} else if deleted > 0 {
+			slog.Info("Pruned raw samples", "count", deleted, "older_than", rawCutoff)
+		}
+
+		hourlyCutoff := now.AddDate(0, 0, -365)
+		deletedHourly, err := d.store.PruneHourly(ctx, hourlyCutoff, 1000)
+		if err != nil {
+			slog.Warn("Startup prune hourly aggregates failed", "error", err)
+		} else if deletedHourly > 0 {
+			slog.Info("Pruned hourly aggregates", "count", deletedHourly)
+		}
+	}
+
+	slog.Info("Startup aggregation complete")
+}
+
+// doAggregate runs one cycle of aggregation and optional pruning.
+func (d *Daemon) doAggregate(ctx context.Context) {
+	if d.store == nil {
+		return
+	}
+	now := time.Now().UTC()
+
+	hourlyCount, err := d.store.AggregateHourly(ctx, time.Time{}, now)
+	if err != nil {
+		slog.Warn("Hourly aggregation failed", "error", err)
+		return
+	}
+	slog.Info("Hourly aggregation complete", "count", hourlyCount)
+
+	dailyCount, err := d.store.AggregateDaily(ctx, time.Time{}, now)
+	if err != nil {
+		slog.Warn("Daily aggregation failed", "error", err)
+		return
+	}
+	slog.Info("Daily aggregation complete", "count", dailyCount)
+
+	if d.retentionDays > 0 {
+		rawCutoff := now.AddDate(0, 0, -d.retentionDays)
+		deleted, err := d.store.PruneSamples(ctx, rawCutoff, 1000)
+		if err != nil {
+			slog.Warn("Prune failed", "error", err)
+		} else if deleted > 0 {
+			slog.Info("Pruned old raw samples", "count", deleted, "older_than", rawCutoff)
+		}
+
+		hourlyCutoff := now.AddDate(0, 0, -365)
+		deletedHourly, err := d.store.PruneHourly(ctx, hourlyCutoff, 1000)
+		if err != nil {
+			slog.Warn("Hourly prune failed", "error", err)
+		} else if deletedHourly > 0 {
+			slog.Info("Pruned old hourly aggregates", "count", deletedHourly)
+		}
+	}
+}
+
+// aggregationLoop runs periodic aggregation until the context is cancelled.
+func (d *Daemon) aggregationLoop(ctx context.Context) {
+	if d.store == nil || d.aggregateInterval <= 0 {
+		return
+	}
+	slog.Info("Aggregation loop started", "interval", d.aggregateInterval)
+	defer slog.Info("Aggregation loop stopped")
+
+	ticker := time.NewTicker(d.aggregateInterval)
+	defer ticker.Stop()
+
+	d.doAggregate(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.doAggregate(ctx)
+		}
+	}
 }
 
 // Close cleans up daemon resources. Called after Run() returns.

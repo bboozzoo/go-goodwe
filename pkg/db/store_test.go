@@ -28,9 +28,12 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -451,7 +454,7 @@ func TestMigration_VoltageTablesCreated(t *testing.T) {
 	var sv int
 	err = s.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
 	require.NoError(t, err)
-	assert.Equal(t, 2, sv, "schema version should be 2")
+	assert.Equal(t, 3, sv, "schema version should be 3")
 
 	// Verify cursor can be updated and re-read.
 	cursor.LastProcessedSampleID = 42
@@ -462,6 +465,320 @@ func TestMigration_VoltageTablesCreated(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cursor2)
 	assert.Equal(t, int64(42), cursor2.LastProcessedSampleID)
+}
+
+func TestAggregateHourly(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	t0 := now.Truncate(time.Hour) // hour boundary
+
+	// Insert samples for 2 sensors over 3 hours.
+	// Hour 0: t0 to t0+1h
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", t0.Add(10*time.Minute), samplePtr(230), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", t0.Add(20*time.Minute), samplePtr(235), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_b", "W", t0.Add(15*time.Minute), samplePtr(500), nil))
+	// Hour 1: t0+1h to t0+2h
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", t0.Add(1*time.Hour+10*time.Minute), samplePtr(240), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_b", "W", t0.Add(1*time.Hour+5*time.Minute), samplePtr(600), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_b", "W", t0.Add(1*time.Hour+30*time.Minute), samplePtr(700), nil))
+	// Hour 2: t0+2h to t0+3h (outside aggregation range)
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", t0.Add(2*time.Hour+10*time.Minute), samplePtr(250), nil))
+
+	// Aggregate hours 0 and 1 (2 hours).
+	n, err := s.AggregateHourly(ctx, t0, t0.Add(2*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), n, "should insert 4 rows (2 sensors × 2 hours)")
+
+	// Verify 4 rows: 2 sensors × 2 hours.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT sensor_name, bucket_start, value_min, value_max, value_avg, sample_count
+		FROM sensor_samples_hourly
+		ORDER BY sensor_name, bucket_start
+	`)
+	require.NoError(t, err)
+
+	type hRow struct {
+		name             string
+		start            time.Time
+		min, max, avg    float64
+		count            int
+	}
+	var got []hRow
+	for rows.Next() {
+		var r hRow
+		require.NoError(t, rows.Scan(&r.name, &r.start, &r.min, &r.max, &r.avg, &r.count))
+		got = append(got, r)
+	}
+	require.NoError(t, rows.Err())
+	_ = rows.Close()
+	require.Len(t, got, 4)
+
+	// sensor_a hour 0: 230, 235 → min=230, max=235, avg=232.5, count=2
+	assert.Equal(t, "sensor_a", got[0].name)
+	assert.Equal(t, t0.Unix(), got[0].start.Unix())
+	assert.Equal(t, 230.0, got[0].min)
+	assert.Equal(t, 235.0, got[0].max)
+	assert.InDelta(t, 232.5, got[0].avg, 0.01)
+	assert.Equal(t, 2, got[0].count)
+
+	// sensor_a hour 1: 240 → min=240, max=240, avg=240, count=1
+	assert.Equal(t, "sensor_a", got[1].name)
+	assert.Equal(t, t0.Add(1*time.Hour).Unix(), got[1].start.Unix())
+	assert.Equal(t, 240.0, got[1].min)
+	assert.Equal(t, 240.0, got[1].max)
+	assert.Equal(t, 240.0, got[1].avg)
+	assert.Equal(t, 1, got[1].count)
+
+	// sensor_b hour 0: 500 → min=500, max=500, avg=500, count=1
+	assert.Equal(t, "sensor_b", got[2].name)
+	assert.Equal(t, t0.Unix(), got[2].start.Unix())
+	assert.Equal(t, 500.0, got[2].min)
+	assert.Equal(t, 500.0, got[2].max)
+	assert.Equal(t, 500.0, got[2].avg)
+	assert.Equal(t, 1, got[2].count)
+
+	// sensor_b hour 1: 600, 700 → min=600, max=700, avg=650, count=2
+	assert.Equal(t, "sensor_b", got[3].name)
+	assert.Equal(t, t0.Add(1*time.Hour).Unix(), got[3].start.Unix())
+	assert.Equal(t, 600.0, got[3].min)
+	assert.Equal(t, 700.0, got[3].max)
+	assert.InDelta(t, 650.0, got[3].avg, 0.01)
+	assert.Equal(t, 2, got[3].count)
+
+	// Run again — idempotent: no duplicate rows.
+	n2, err := s.AggregateHourly(ctx, t0, t0.Add(2*time.Hour))
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, n2, int64(0), "idempotent re-run returns >=0 rows affected")
+	_ = n2
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sensor_samples_hourly`).Scan(&count))
+	assert.Equal(t, 4, count)
+}
+
+func TestAggregateDaily(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(24 * time.Hour) // day boundary (midnight)
+
+	// Insert hourly data spanning 2 days.
+	// Day 0 (today): 2 sensors, 2 hours each
+	for _, sensor := range []string{"sensor_a", "sensor_b"} {
+		for hour := 0; hour < 2; hour++ {
+			ts := now.Add(time.Duration(hour) * time.Hour)
+			_, err := s.db.ExecContext(ctx, `
+				INSERT INTO sensor_samples_hourly (sensor_name, bucket_start, value_min, value_max, value_avg, sample_count)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, sensor, ts, 100.0+float64(hour), 200.0+float64(hour), 150.0+float64(hour), 10*(hour+1))
+			require.NoError(t, err)
+		}
+	}
+
+	// Day 1 (tomorrow): 1 sensor, 1 hour
+	ts := now.Add(24 * time.Hour)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sensor_samples_hourly (sensor_name, bucket_start, value_min, value_max, value_avg, sample_count)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, "sensor_a", ts, 300.0, 400.0, 350.0, 5)
+	require.NoError(t, err)
+
+	// Aggregate day 0 only.
+	n, err := s.AggregateDaily(ctx, now, now.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), n, "should insert 2 rows (2 sensors × 1 day)")
+
+	// Verify: 2 rows (2 sensors × 1 day)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT sensor_name, bucket_start, value_min, value_max, value_avg, sample_count
+		FROM sensor_samples_daily
+		ORDER BY sensor_name, bucket_start
+	`)
+	require.NoError(t, err)
+
+	type dRow struct {
+		name             string
+		start            time.Time
+		min, max, avg    float64
+		count            int
+	}
+	var got []dRow
+	for rows.Next() {
+		var r dRow
+		require.NoError(t, rows.Scan(&r.name, &r.start, &r.min, &r.max, &r.avg, &r.count))
+		got = append(got, r)
+	}
+	require.NoError(t, rows.Err())
+	_ = rows.Close()
+	require.Len(t, got, 2)
+
+	// sensor_a: MIN(100,101)=100, MAX(200,201)=201, AVG(150,151)=150.5, SUM(10+20)=30
+	assert.Equal(t, "sensor_a", got[0].name)
+	assert.Equal(t, now.Unix(), got[0].start.Unix())
+	assert.Equal(t, 100.0, got[0].min)
+	assert.Equal(t, 201.0, got[0].max)
+	assert.InDelta(t, 150.5, got[0].avg, 0.01)
+	assert.Equal(t, 30, got[0].count)
+
+	// sensor_b: MIN(100,101)=100, MAX(200,201)=201, AVG(150,151)=150.5, SUM(10+20)=30
+	assert.Equal(t, "sensor_b", got[1].name)
+	assert.Equal(t, now.Unix(), got[1].start.Unix())
+	assert.Equal(t, 100.0, got[1].min)
+	assert.Equal(t, 201.0, got[1].max)
+	assert.InDelta(t, 150.5, got[1].avg, 0.01)
+	assert.Equal(t, 30, got[1].count)
+
+	// Run again — idempotent.
+	n2, err := s.AggregateDaily(ctx, now, now.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, n2, int64(0), "idempotent re-run returns >=0 rows affected")
+	_ = n2
+	var count int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sensor_samples_daily`).Scan(&count))
+	assert.Equal(t, 2, count)
+}
+
+func TestAggregateProgressLogging(t *testing.T) {
+	// Capture slog output to verify progress logs appear at iteration boundaries.
+	var buf bytes.Buffer
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	orig := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(orig)
+
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Aggregation over 250 hours with no raw data — progress logs should
+	// appear at the 100th and 200th bucket (iter%100==0).
+	start := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(250 * time.Hour)
+
+	_, err := s.AggregateHourly(ctx, start, end)
+	require.NoError(t, err)
+
+	output := buf.String()
+	t.Log("Captured slog output:\n", output)
+
+	// Expect progress log at iter=100 (bucket = start + 99h, since iter starts at 1).
+	bucket100 := start.Add(99 * time.Hour).Format(time.RFC3339)
+	assert.Contains(t, output, bucket100,
+		"should have progress log at iter=100 (bucket start+99h)")
+
+	// Expect progress log at iter=200.
+	bucket200 := start.Add(199 * time.Hour).Format(time.RFC3339)
+	assert.Contains(t, output, bucket200,
+		"should have progress log at iter=200 (bucket start+199h)")
+
+	// Count how many "Aggregating hourly" lines appeared.
+	lines := strings.Count(output, "Aggregating hourly")
+	assert.Equal(t, 2, lines, "expected exactly 2 progress lines for 250 hours")
+
+	// Verify total row count in last progress line.
+	assert.Contains(t, output, `rows_so_far=0`,
+		"should report 0 rows since no raw data was inserted")
+}
+
+func TestPruneSamples(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// 3 old samples (2 hours ago)
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", now.Add(-2*time.Hour), samplePtr(100), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", now.Add(-2*time.Hour+5*time.Minute), samplePtr(110), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_b", "W", now.Add(-2*time.Hour), samplePtr(200), nil))
+
+	// 2 new samples (30 min ago)
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V", now.Add(-30*time.Minute), samplePtr(120), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_b", "W", now.Add(-30*time.Minute), samplePtr(300), nil))
+
+	// Prune at midpoint: 1 hour ago
+	deleted, err := s.PruneSamples(ctx, now.Add(-1*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), deleted)
+
+	// Verify: only 2 new samples remain
+	samplesA, err := s.QueryRawSamples(ctx, "sensor_a", now.Add(-3*time.Hour), now, 100)
+	require.NoError(t, err)
+	require.Len(t, samplesA, 1)
+	require.NotNil(t, samplesA[0].Value)
+	assert.Equal(t, 120.0, *samplesA[0].Value)
+
+	samplesB, err := s.QueryRawSamples(ctx, "sensor_b", now.Add(-3*time.Hour), now, 100)
+	require.NoError(t, err)
+	require.Len(t, samplesB, 1)
+	require.NotNil(t, samplesB[0].Value)
+	assert.Equal(t, 300.0, *samplesB[0].Value)
+}
+
+func TestQueryAggregated(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	t0 := now.Truncate(time.Hour)
+
+	// Insert hourly data for 2 sensors over 3 hours.
+	for _, sensor := range []string{"sensor_a", "sensor_b"} {
+		for hour := 0; hour < 3; hour++ {
+			ts := t0.Add(time.Duration(hour) * time.Hour)
+			_, err := s.db.ExecContext(ctx, `
+				INSERT INTO sensor_samples_hourly (sensor_name, bucket_start, value_min, value_max, value_avg, sample_count)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, sensor, ts, 10.0+float64(hour), 20.0+float64(hour), 15.0+float64(hour), 5)
+			require.NoError(t, err)
+		}
+	}
+
+	// Query for sensor_a, hours 1-2 (inclusive).
+	results, err := s.QueryAggregatedSamples(ctx, "sensor_a", t0.Add(1*time.Hour), t0.Add(2*time.Hour), "hour")
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// Ascending order.
+	assert.Equal(t, "sensor_a", results[0].SensorName)
+	assert.Equal(t, t0.Add(1*time.Hour).Unix(), results[0].BucketStart.Unix())
+	require.NotNil(t, results[0].ValueMin)
+	assert.Equal(t, 11.0, *results[0].ValueMin)
+	require.NotNil(t, results[0].ValueMax)
+	assert.Equal(t, 21.0, *results[0].ValueMax)
+	require.NotNil(t, results[0].ValueAvg)
+	assert.Equal(t, 16.0, *results[0].ValueAvg)
+	assert.Equal(t, 5, results[0].SampleCount)
+
+	assert.Equal(t, "sensor_a", results[1].SensorName)
+	assert.Equal(t, t0.Add(2*time.Hour).Unix(), results[1].BucketStart.Unix())
+	assert.Equal(t, 12.0, *results[1].ValueMin)
+	assert.Equal(t, 22.0, *results[1].ValueMax)
+	assert.Equal(t, 17.0, *results[1].ValueAvg)
+	assert.Equal(t, 5, results[1].SampleCount)
+
+	// Query non-existent sensor — empty slice.
+	empty, err := s.QueryAggregatedSamples(ctx, "nonexistent", t0, t0.Add(3*time.Hour), "hour")
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+
+	// Unknown bucket — error.
+	_, err = s.QueryAggregatedSamples(ctx, "sensor_a", t0, t0.Add(3*time.Hour), "week")
+	assert.ErrorContains(t, err, "unknown bucket")
+
+	// Daily bucket via AggregateDaily.
+	dayStart := t0.Truncate(24 * time.Hour)
+	_, err = s.AggregateDaily(ctx, dayStart, dayStart.Add(24*time.Hour))
+	require.NoError(t, err)
+	daily, err := s.QueryAggregatedSamples(ctx, "sensor_a", dayStart, dayStart.Add(24*time.Hour), "day")
+	require.NoError(t, err)
+	require.Len(t, daily, 1)
+	assert.Equal(t, "sensor_a", daily[0].SensorName)
+	assert.Equal(t, dayStart.Unix(), daily[0].BucketStart.Unix())
+	require.NotNil(t, daily[0].ValueMin)
+	assert.Equal(t, 10.0, *daily[0].ValueMin)
+	assert.Equal(t, 22.0, *daily[0].ValueMax)
+	assert.InDelta(t, 16.0, *daily[0].ValueAvg, 0.01)
+	assert.Equal(t, 15, daily[0].SampleCount)
 }
 
 func TestMigration_OldSchemaUpgrade(t *testing.T) {
@@ -506,11 +823,11 @@ func TestMigration_OldSchemaUpgrade(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Schema version should be 2.
+	// Schema version should be 3.
 	var sv int
 	err = s2.db.QueryRow(`PRAGMA user_version`).Scan(&sv)
 	require.NoError(t, err)
-	assert.Equal(t, 2, sv, "schema version should be 2")
+	assert.Equal(t, 3, sv, "schema version should be 3")
 
 	// Cursor should be reset.
 	cursor, err := s2.GetVoltageAnalysisCursor(ctx)

@@ -118,7 +118,7 @@ func runDaemonWithStore(t *testing.T, d *Daemon, store *db.Store, pollInterval t
 // ---- tests ----
 
 func TestDaemon_NoInverter(t *testing.T) {
-	d := New(nil, nil, "", 0)
+	d := New(nil, nil, "", 0, 0, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	err := d.Run(ctx)
@@ -128,7 +128,7 @@ func TestDaemon_NoInverter(t *testing.T) {
 
 func TestDaemon_NoPoll(t *testing.T) {
 	inv := &mockInverter{}
-	d := New(inv, nil, "", 0)
+	d := New(inv, nil, "", 0, 0, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	err := d.Run(ctx)
@@ -142,7 +142,7 @@ func TestDaemon_NoPoll(t *testing.T) {
 
 func TestDaemon_ConnectSuccess(t *testing.T) {
 	inv := &mockInverter{}
-	d := New(inv, nil, "", 50*time.Millisecond)
+	d := New(inv, nil, "", 50*time.Millisecond, 0, 0)
 	cancel, _ := runDaemon(t, d, 50*time.Millisecond)
 
 	// Wait for the state machine to connect.
@@ -160,7 +160,7 @@ func TestDaemon_ConnectSuccess(t *testing.T) {
 }
 
 func TestDaemon_ConnErrorNotSticky(t *testing.T) {
-	d := New(nil, nil, "", 0)
+	d := New(nil, nil, "", 0, 0, 0)
 
 	// Simulate a transient failure.
 	d.setState(api.InverterStateDisconnected, fmt.Errorf("transient error"))
@@ -199,7 +199,7 @@ func TestDaemon_ConnectFailsThenRetries(t *testing.T) {
 	// Actually, the backoff is fixed at backoffInitial=5s. That makes
 	// this test slow. Let's just verify the initial behavior: failed
 	// connect -> state becomes Disconnected (with error).
-	d := New(inv, nil, "", time.Hour) // long poll, we won't reach it
+	d := New(inv, nil, "", time.Hour, 0, 0) // long poll, we won't reach it
 	d.setState(api.InverterStateDisconnected, nil)
 
 	// Manually trigger doConnect to test the logic.
@@ -223,7 +223,7 @@ func TestDaemon_SerialMismatch(t *testing.T) {
 		"fw", "dsp", "arm", 5000)
 	require.NoError(t, err)
 
-	d := New(inv, store, "", time.Hour)
+	d := New(inv, store, "", time.Hour, 0, 0)
 	d.doConnect(context.Background())
 
 	assert.Equal(t, api.InverterStateFailed, d.InverterState())
@@ -246,7 +246,7 @@ func TestDaemon_PollFailsAndReconnects(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
-	d := New(inv, store, "", time.Hour)
+	d := New(inv, store, "", time.Hour, 0, 0)
 
 	// Simulate connected -> poll failure -> disconnected.
 	d.setState(api.InverterStateConnected, nil)
@@ -269,7 +269,7 @@ func TestDaemon_IdentityStoredOnFirstConnect(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
-	d := New(inv, store, "", time.Hour)
+	d := New(inv, store, "", time.Hour, 0, 0)
 	d.doConnect(context.Background())
 	assert.Equal(t, api.InverterStateConnected, d.InverterState())
 
@@ -292,7 +292,7 @@ func TestDaemon_IdentityVerifiedOnSubsequentConnect(t *testing.T) {
 		"fw", "dsp", "arm", 10000)
 	require.NoError(t, err)
 
-	d := New(&mockInverter{}, store, "", time.Hour)
+	d := New(&mockInverter{}, store, "", time.Hour, 0, 0)
 	d.doConnect(context.Background())
 	assert.Equal(t, api.InverterStateConnected, d.InverterState())
 
@@ -301,7 +301,7 @@ func TestDaemon_IdentityVerifiedOnSubsequentConnect(t *testing.T) {
 }
 
 func TestDaemon_VerificationErrorExposed(t *testing.T) {
-	d := New(&mockInverter{}, nil, "", time.Hour)
+	d := New(&mockInverter{}, nil, "", time.Hour, 0, 0)
 	// Set a verification error manually.
 	d.mu.Lock()
 	d.verificationErr = fmt.Errorf("serial mismatch: expected A, got B")
@@ -313,7 +313,7 @@ func TestDaemon_VerificationErrorExposed(t *testing.T) {
 }
 
 func TestDaemon_NonNilInverter(t *testing.T) {
-	d := New(&mockInverter{}, nil, "", 0)
+	d := New(&mockInverter{}, nil, "", 0, 0, 0)
 	assert.NotEqual(t, api.InverterStateDisabled, d.InverterState())
 }
 
@@ -324,7 +324,7 @@ func TestDaemon_VoltageAnalysisTriggered(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	inv := &mockInverter{}
-	d := New(inv, store, "", 50*time.Millisecond)
+	d := New(inv, store, "", 50*time.Millisecond, 0, 0)
 
 	// Run the daemon briefly — it should poll, store samples, and trigger analysis.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -337,4 +337,13 @@ func TestDaemon_VoltageAnalysisTriggered(t *testing.T) {
 	// Test passes if the poll cycle completes without panic.
 	// The analysis engine correctness is covered by Plan 1 unit tests.
 	t.Log("Voltage analysis trigger completed without panic")
+}
+
+func TestDaemon_AggregationDisabled(t *testing.T) {
+	inv := &mockInverter{}
+	d := New(inv, nil, "", 50*time.Millisecond, 0, 0)
+	cancel, _ := runDaemon(t, d, 50*time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, api.InverterStateConnected, d.InverterState())
+	cancel()
 }

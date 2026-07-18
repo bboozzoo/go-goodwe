@@ -252,7 +252,10 @@ function timeRangeToParams(range) {
     case '30d': since = new Date(now.getTime() - 30*24*60*60*1000); break;
     default: since = new Date(now.getTime() - 1*60*60*1000);
   }
-  return { since: since.toISOString(), until: now.toISOString() };
+  const params = { since: since.toISOString(), until: now.toISOString() };
+  if (range === '7d') params.bucket = 'hour';
+  if (range === '30d') params.bucket = 'day';
+  return params;
 }
 
 function getCSSVar(name) {
@@ -431,8 +434,9 @@ async function loadSensors() {
   }
 }
 
-async function fetchSensorData(sensorName, since, until, limit) {
+async function fetchSensorData(sensorName, since, until, limit, bucket) {
   const params = new URLSearchParams({ since, until, limit: String(limit || 5000) });
+  if (bucket) params.set('bucket', bucket);
   return fetchJSON(`/api/data/${encodeURIComponent(sensorName)}/aggregate?${params}`);
 }
 
@@ -595,7 +599,7 @@ async function refreshGraph(graph) {
 
   for (const name of graph.sensorNames) {
     try {
-      const data = await fetchSensorData(name, params.since, params.until);
+      const data = await fetchSensorData(name, params.since, params.until, 5000, params.bucket);
       const samples = data.samples || [];
       const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
       const values = insertNullGaps(raw);

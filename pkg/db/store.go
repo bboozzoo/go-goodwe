@@ -60,6 +60,16 @@ type Sample struct {
 	SampledAt time.Time `json:"sampled_at"`
 }
 
+// AggregatedSample holds a pre-computed aggregate for a sensor over a time bucket.
+type AggregatedSample struct {
+	SensorName  string    `json:"sensor_name"`
+	BucketStart time.Time `json:"bucket_start"`
+	ValueMin    *float64  `json:"value_min,omitempty"`
+	ValueMax    *float64  `json:"value_max,omitempty"`
+	ValueAvg    *float64  `json:"value_avg,omitempty"`
+	SampleCount int       `json:"sample_count"`
+}
+
 // VoltageAnalysisCursor tracks the progress of voltage quality analysis.
 // SampleRow pairs a sample with its rowid for cursor-based progress tracking.
 type SampleRow struct {
@@ -277,6 +287,256 @@ func (s *Store) SampleAt(ctx context.Context, name string, at time.Time) (*Sampl
 	return &samp, nil
 }
 
+// AggregateHourly computes hourly aggregates from raw sensor_samples and
+// stores them in sensor_samples_hourly. It processes one hour at a time
+// from the given since time up to until. Idempotent — safe to re-run.
+func (s *Store) AggregateHourly(ctx context.Context, since, until time.Time) (int64, error) {
+	// Determine cursor: the latest already-aggregated bucket.
+	var cursorStr sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(bucket_start), '1970-01-01T00:00:00Z') FROM sensor_samples_hourly`).Scan(&cursorStr)
+	if err != nil {
+		return 0, fmt.Errorf("aggregate hourly: get cursor: %w", err)
+	}
+	cursor, err := time.Parse(time.RFC3339, cursorStr.String)
+	if err != nil {
+		// Try SQLite native format.
+		cursor, err = time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", cursorStr.String)
+		if err != nil {
+			return 0, fmt.Errorf("aggregate hourly: parse cursor %q: %w", cursorStr.String, err)
+		}
+	}
+
+	start := cursor.Add(time.Hour)
+	if start.Before(since) {
+		start = since
+	}
+	// Round down to the hour boundary.
+	start = start.Truncate(time.Hour)
+	end := until.Truncate(time.Hour)
+
+	var total, iter int64
+	for t := start; t.Before(end); t = t.Add(time.Hour) {
+		iter++
+		hourEnd := t.Add(time.Hour)
+		result, err := s.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO sensor_samples_hourly
+				(sensor_name, bucket_start, value_min, value_max, value_avg, sample_count)
+			SELECT
+				sensor_name,
+				?,
+				MIN(value), MAX(value), AVG(value), COUNT(*)
+			FROM sensor_samples
+			WHERE sampled_at >= ? AND sampled_at < ?
+			  AND value IS NOT NULL
+			GROUP BY sensor_name
+		`, t, t, hourEnd)
+		if err != nil {
+			return total, fmt.Errorf("aggregate hourly: hour %s: %w", t.Format(time.RFC3339), err)
+		}
+		n, _ := result.RowsAffected()
+		total += n
+		if iter%100 == 0 {
+			slog.Info("Aggregating hourly", "bucket", t.Format(time.RFC3339), "rows_so_far", total)
+		}
+		// Check for context cancellation between hours.
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
+}
+
+// AggregateDaily computes daily aggregates from sensor_samples_hourly and
+// stores them in sensor_samples_daily. It processes one day at a time
+// from the given since time up to until. Idempotent — safe to re-run.
+func (s *Store) AggregateDaily(ctx context.Context, since, until time.Time) (int64, error) {
+	// Determine cursor: the latest already-aggregated bucket.
+	var cursorStr sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(bucket_start), '1970-01-01T00:00:00Z') FROM sensor_samples_daily`).Scan(&cursorStr)
+	if err != nil {
+		return 0, fmt.Errorf("aggregate daily: get cursor: %w", err)
+	}
+	cursor, err := time.Parse(time.RFC3339, cursorStr.String)
+	if err != nil {
+		cursor, err = time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", cursorStr.String)
+		if err != nil {
+			return 0, fmt.Errorf("aggregate daily: parse cursor %q: %w", cursorStr.String, err)
+		}
+	}
+
+	start := cursor.AddDate(0, 0, 1)
+	if start.Before(since) {
+		start = since
+	}
+	// Round down to the day boundary.
+	start = start.Truncate(24 * time.Hour)
+	end := until.Truncate(24 * time.Hour)
+
+	var total, iter int64
+	for t := start; t.Before(end); t = t.AddDate(0, 0, 1) {
+		iter++
+		dayEnd := t.AddDate(0, 0, 1)
+		result, err := s.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO sensor_samples_daily
+				(sensor_name, bucket_start, value_min, value_max, value_avg, sample_count)
+			SELECT
+				sensor_name,
+				?,
+				MIN(value_min), MAX(value_max), AVG(value_avg), SUM(sample_count)
+			FROM sensor_samples_hourly
+			WHERE bucket_start >= ? AND bucket_start < ?
+			GROUP BY sensor_name
+		`, t, t, dayEnd)
+		if err != nil {
+			return total, fmt.Errorf("aggregate daily: day %s: %w", t.Format(time.RFC3339), err)
+		}
+		n, _ := result.RowsAffected()
+		total += n
+		if iter%100 == 0 {
+			slog.Info("Aggregating daily", "bucket", t.Format(time.RFC3339), "rows_so_far", total)
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
+}
+
+// PruneSamples batch-deletes raw sensor samples older than the given time.
+// It iterates over each distinct sensor name to avoid large transactions
+// and returns the total number of rows deleted.
+func (s *Store) PruneSamples(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT sensor_name FROM sensor_samples`)
+	if err != nil {
+		return 0, fmt.Errorf("prune samples: list sensors: %w", err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("prune samples: scan name: %w", err)
+		}
+		names = append(names, name)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("prune samples: rows: %w", err)
+	}
+
+	var total int64
+	for _, name := range names {
+		for {
+			result, err := s.db.ExecContext(ctx,
+				`DELETE FROM sensor_samples
+				 WHERE rowid IN (
+				     SELECT rowid FROM sensor_samples
+				     WHERE sensor_name = ? AND sampled_at < ?
+				     LIMIT ?)`,
+				name, before, batchSize)
+			if err != nil {
+				return total, fmt.Errorf("prune samples: %w", err)
+			}
+			n, _ := result.RowsAffected()
+			if n == 0 {
+				break
+			}
+			total += n
+			if (total / 1000) > ((total - n) / 1000) {
+				slog.Info("Pruning samples", "deleted_so_far", total, "sensor", name)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
+}
+
+// PruneHourly batch-deletes hourly aggregate rows older than the given time.
+// Uses the composite PK for batching since sensor_samples_hourly is WITHOUT ROWID.
+func (s *Store) PruneHourly(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	var total int64
+	for {
+		result, err := s.db.ExecContext(ctx,
+			`DELETE FROM sensor_samples_hourly
+			 WHERE (sensor_name, bucket_start) IN (
+			     SELECT sensor_name, bucket_start FROM sensor_samples_hourly
+			     WHERE bucket_start < ?
+			     ORDER BY bucket_start
+			     LIMIT ?)`,
+			before, batchSize)
+		if err != nil {
+			return total, fmt.Errorf("prune hourly: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			break
+		}
+		total += n
+		if (total / 1000) > ((total - n) / 1000) {
+			slog.Info("Pruning hourly aggregates", "deleted_so_far", total)
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
+}
+
+// QueryAggregatedSamples returns aggregated samples for a given sensor and
+// time range. The bucket parameter must be "hour" or "day" to select the
+// appropriate table. Results are returned in ascending order by bucket_start.
+func (s *Store) QueryAggregatedSamples(ctx context.Context, name string, since, until time.Time, bucket string) ([]AggregatedSample, error) {
+	var table string
+	switch bucket {
+	case "hour":
+		table = "sensor_samples_hourly"
+	case "day":
+		table = "sensor_samples_daily"
+	default:
+		return []AggregatedSample{}, fmt.Errorf("query aggregated: unknown bucket %q", bucket)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT sensor_name, bucket_start, value_min, value_max, value_avg, sample_count
+		FROM %s
+		WHERE sensor_name = ? AND bucket_start >= ? AND bucket_start <= ?
+		ORDER BY bucket_start ASC`, table)
+
+	rows, err := s.db.QueryContext(ctx, query, name, since, until)
+	if err != nil {
+		return nil, fmt.Errorf("query aggregated: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []AggregatedSample
+	for rows.Next() {
+		var a AggregatedSample
+		if err := rows.Scan(&a.SensorName, &a.BucketStart, &a.ValueMin, &a.ValueMax, &a.ValueAvg, &a.SampleCount); err != nil {
+			return nil, fmt.Errorf("query aggregated: scan: %w", err)
+		}
+		results = append(results, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query aggregated: rows: %w", err)
+	}
+	if results == nil {
+		results = []AggregatedSample{}
+	}
+	return results, nil
+}
+
 // PurgeBadSamples deletes sensor samples with physically impossible values.
 // ratedPower is the inverter's rated power in watts, used to cap power readings.
 
@@ -485,6 +745,31 @@ func migrate(db *sql.DB) error {
 			CREATE INDEX IF NOT EXISTS idx_voltage_events_phase_start ON voltage_events(phase, start_time DESC);
 		`)
 		_, _ = db.Exec(`PRAGMA user_version = 2`)
+	}
+
+	// v3: aggregate tables
+	if schemaVersion < 3 {
+		_, _ = db.Exec(`
+			CREATE TABLE IF NOT EXISTS sensor_samples_hourly (
+				sensor_name TEXT NOT NULL,
+				bucket_start TIMESTAMP NOT NULL,
+				value_min REAL,
+				value_max REAL,
+				value_avg REAL,
+				sample_count INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (sensor_name, bucket_start)
+			) WITHOUT ROWID;
+			CREATE TABLE IF NOT EXISTS sensor_samples_daily (
+				sensor_name TEXT NOT NULL,
+				bucket_start TIMESTAMP NOT NULL,
+				value_min REAL,
+				value_max REAL,
+				value_avg REAL,
+				sample_count INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (sensor_name, bucket_start)
+			) WITHOUT ROWID;
+		`)
+		_, _ = db.Exec(`PRAGMA user_version = 3`)
 	}
 
 	// Re-read version for logging.

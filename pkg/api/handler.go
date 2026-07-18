@@ -87,6 +87,7 @@ type SensorStore interface {
 	LatestSample(ctx context.Context, name string) (*db.Sample, error)
 	LastSampleTime(ctx context.Context) (*time.Time, error)
 	SampleAt(ctx context.Context, name string, at time.Time) (*db.Sample, error)
+	QueryAggregatedSamples(ctx context.Context, name string, since, until time.Time, bucket string) ([]db.AggregatedSample, error)
 }
 
 // VoltageAnalysisStore is the interface for querying voltage event analysis results.
@@ -359,8 +360,28 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// TODO: support bucket="hour" and bucket="day" using aggregate tables.
-	_ = bucket
+	if bucket == "hour" || bucket == "day" {
+		aggSamples, err := h.store.QueryAggregatedSamples(r.Context(), sensorName, since, until, bucket)
+		if err != nil {
+			slog.Warn("Failed to query aggregated samples", "sensor", sensorName, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "failed to query aggregated samples")
+			return
+		}
+		samples := make([]map[string]any, len(aggSamples))
+		for i, as := range aggSamples {
+			s := map[string]any{
+				"value":      as.ValueAvg,
+				"sampled_at": as.BucketStart,
+			}
+			samples[i] = s
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"sensor":     sensorName,
+			"samples":    samples,
+			"aggregated": bucket,
+		})
+		return
+	}
 
 	// Query delta reference if requested.
 	var refSample *db.Sample

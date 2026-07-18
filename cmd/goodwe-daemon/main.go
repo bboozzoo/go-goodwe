@@ -81,6 +81,11 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	offlineAnalyze := flag.Bool("offline-analyze-voltage", false, "Run voltage analysis on the DB once and exit")
 	showVersion := flag.Bool("version", false, "Display version information and exit")
+	aggregate := flag.Bool("aggregate", false, "One-shot: aggregate pending raw data into hourly/daily tables and exit")
+	aggregateBackfill := flag.Bool("aggregate-backfill", false, "One-shot: aggregate ALL raw data into hourly/daily tables and exit")
+	prune := flag.Bool("prune", false, "One-shot: delete raw samples older than -retention-days and exit")
+	retentionDays := flag.Int("retention-days", 30, "Number of days of raw data to keep (used with -prune and background pruning)")
+	aggregateInterval := flag.Duration("aggregate-interval", time.Hour, "How often to run aggregation (0 = disabled)")
 	flag.Parse()
 
 	if *showVersion {
@@ -135,6 +140,54 @@ func main() {
 		}
 		os.Exit(0)
 	}
+
+	if *aggregate || *aggregateBackfill {
+		var since time.Time
+		if *aggregate {
+			since = time.Now().UTC().Add(-48 * time.Hour)
+		}
+		var until = time.Now().UTC()
+		ctx := context.Background()
+		hourlyCount, err := store.AggregateHourly(ctx, since, until)
+		if err != nil {
+			slog.Error("Hourly aggregation failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Hourly aggregation complete", "count", hourlyCount)
+
+		dailyCount, err := store.AggregateDaily(ctx, since, until)
+		if err != nil {
+			slog.Error("Daily aggregation failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Daily aggregation complete", "count", dailyCount)
+		slog.Info("Aggregation complete")
+		os.Exit(0)
+	}
+
+	if *prune {
+		rawCutoff := time.Now().UTC().AddDate(0, 0, -*retentionDays)
+		hourlyCutoff := time.Now().UTC().AddDate(0, 0, -365)
+
+		slog.Info("Pruning raw samples", "older_than", rawCutoff)
+		ctx := context.Background()
+		deleted, err := store.PruneSamples(ctx, rawCutoff, 1000)
+		if err != nil {
+			slog.Error("Prune failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Pruned raw samples", "count", deleted)
+
+		deletedHourly, err := store.PruneHourly(ctx, hourlyCutoff, 1000)
+		if err != nil {
+			slog.Error("Hourly prune failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Pruned hourly aggregates", "count", deletedHourly)
+
+		os.Exit(0)
+	}
+
 	defer func() {
 		if err := store.Close(); err != nil {
 			slog.Warn("Error closing database on shutdown", "error", err)
@@ -157,7 +210,7 @@ func main() {
 	}
 
 	// Create the daemon (may have nil inverter — handled gracefully).
-	dmn := daemon.New(inverter, store, *inverterIP, *pollInterval)
+	dmn := daemon.New(inverter, store, *inverterIP, *pollInterval, *aggregateInterval, *retentionDays)
 
 	// Create the API handler with the inverter, daemon status, and store.
 	handler := api.New(inverter, dmn, store, *inverterIP, getVersion(), *debug, store, *pollInterval)

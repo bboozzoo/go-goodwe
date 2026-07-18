@@ -99,8 +99,9 @@ type mockSensorStore struct {
 	onLatestSample             func(ctx context.Context, name string) (*db.Sample, error)
 	onLastTime                 func(ctx context.Context) (*time.Time, error)
 	onSampleAt                 func(ctx context.Context, name string, at time.Time) (*db.Sample, error)
-	onQueryVoltageEvents       func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
-	onGetVoltageAnalysisCursor func(ctx context.Context) (*db.VoltageAnalysisCursor, error)
+	onQueryAggregatedSamples      func(ctx context.Context, name string, since, until time.Time, bucket string) ([]db.AggregatedSample, error)
+	onQueryVoltageEvents          func(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error)
+	onGetVoltageAnalysisCursor    func(ctx context.Context) (*db.VoltageAnalysisCursor, error)
 }
 
 func (m *mockSensorStore) GetInverterIdentity(ctx context.Context) (*db.InverterIdentity, error) {
@@ -132,6 +133,12 @@ func (m *mockSensorStore) SampleAt(ctx context.Context, name string, at time.Tim
 		return m.onSampleAt(ctx, name, at)
 	}
 	return nil, nil
+}
+func (m *mockSensorStore) QueryAggregatedSamples(ctx context.Context, name string, since, until time.Time, bucket string) ([]db.AggregatedSample, error) {
+	if m.onQueryAggregatedSamples != nil {
+		return m.onQueryAggregatedSamples(ctx, name, since, until, bucket)
+	}
+	return []db.AggregatedSample{}, nil
 }
 func (m *mockSensorStore) QueryVoltageEvents(ctx context.Context, before int64, limit int) ([]db.VoltageEvent, int, error) {
 	if m.onQueryVoltageEvents != nil {
@@ -566,6 +573,30 @@ func TestAggregate_DeltaAdjustsMultipleSamples(t *testing.T) {
 	assert.Equal(t, deltaTime.Format(time.RFC3339), delta["at"])
 	assert.Equal(t, refTime.Format(time.RFC3339), delta["reference_at"])
 	assert.InDelta(t, 30.0, delta["gap_seconds"], 1.0)
+}
+
+func TestAggregate_BucketHour(t *testing.T) {
+	ss := &mockSensorStore{
+		onQueryAggregatedSamples: func(ctx context.Context, name string, since, until time.Time, bucket string) ([]db.AggregatedSample, error) {
+			now := time.Now().UTC().Truncate(time.Hour)
+			avg := 1234.5
+			return []db.AggregatedSample{
+				{SensorName: name, BucketStart: now, ValueAvg: &avg, SampleCount: 60},
+			}, nil
+		},
+	}
+	h := newHandler(&mockInverter{}, nil, ss)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data/house_consumption/aggregate?bucket=hour&since=2026-06-15T00:00:00Z&until=2026-06-22T00:00:00Z", nil)
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, 200, rr.Code)
+	body := getBody(t, rr)
+	assert.Equal(t, "hour", body["aggregated"])
+	samples := body["samples"].([]any)
+	assert.NotEmpty(t, samples)
+	s0 := samples[0].(map[string]any)
+	assert.Equal(t, float64(1234.5), s0["value"])
+	assert.Contains(t, s0, "sampled_at")
 }
 
 // ---- redirect ----
