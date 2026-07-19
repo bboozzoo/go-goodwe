@@ -16,3 +16,6 @@ data*.json
 # Plan ledger metadata (not part of the project)
 .plans/
 .taskman/
+
+# Local environment (e.g. GOODWE_TEST_HOST for the deploy skill)
+.env
