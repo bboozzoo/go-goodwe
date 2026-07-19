@@ -370,8 +370,12 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 		samples := make([]map[string]any, len(aggSamples))
 		for i, as := range aggSamples {
 			s := map[string]any{
-				"value":      as.ValueAvg,
-				"sampled_at": as.BucketStart,
+				"value":        as.ValueAvg,
+				"value_min":    as.ValueMin,
+				"value_max":    as.ValueMax,
+				"value_avg":    as.ValueAvg,
+				"sample_count": as.SampleCount,
+				"sampled_at":   as.BucketStart,
 			}
 			samples[i] = s
 		}

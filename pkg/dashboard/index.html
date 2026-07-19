@@ -611,12 +611,28 @@ async function refreshGraph(graph) {
     try {
       const data = await fetchSensorData(name, params.since, params.until, 5000, params.bucket);
       const samples = data.samples || [];
-      const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
+      const unit = sensorUnit(name);
+      const isCounter = (unit === 'kWh');
+      const raw = samples.map(s => {
+        const x = new Date(s.sampled_at).getTime();
+        let y;
+        if (isCounter) {
+          const mn = (s.value_min != null) ? s.value_min : 0;
+          const mx = (s.value_max != null) ? s.value_max : 0;
+          y = mx - mn;
+        } else {
+          y = (s.value_avg != null) ? s.value_avg : s.value;
+        }
+        return { x, y };
+      });
       const values = insertNullGaps(raw, params.bucket);
       const down = downsample(values, MAX_POINTS);
-      datasets.push({ label: name, data: down, borderColor: colorForIndex(datasets.length),
-                      fill: false, tension: 0.1, spanGaps: false, pointRadius: 0,
-                      borderWidth: 1 });
+      const isBar = (state.timeRange === '30d');
+      const idx = datasets.length;
+      const color = colorForIndex(idx);
+      datasets.push(isBar
+        ? { label: name, data: down, backgroundColor: color, borderColor: color, borderWidth: 1, barPercentage: 0.9, categoryPercentage: 0.95 }
+        : { label: name, data: down, borderColor: color, fill: false, tension: 0.1, spanGaps: false, pointRadius: 0, borderWidth: 1 });
     } catch (e) {
       console.warn('Failed to fetch', name, e);
     }
@@ -678,32 +694,32 @@ async function refreshGraph(graph) {
     graph.chart.update('none');
   }
 
+  const isBar = (state.timeRange === '30d');
   graph.chart = new Chart(ctx, {
-    type: 'line',
+    type: isBar ? 'bar' : 'line',
     data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: { duration: 0 },
       scales: {
-        x: {
-          type: 'linear',
-          min: xMin,
-          max: xMax,
-          ticks: {
-            color: getCSSVar('--text-muted'),
-            maxTicksLimit: 10,
-            callback: function(val) {
-              const d = new Date(val);
-              const range = state.timeRange;
-              if (range === '1h' || range === '6h') {
-                return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-              }
-              return (d.getMonth() + 1) + '/' + d.getDate();
-            },
-          },
-          grid: { color: getCSSVar('--border') },
-        },
+        x: isBar
+          ? { type: 'timeseries', min: xMin, max: xMax,
+              time: { unit: 'day', displayFormats: { day: 'M/D' } },
+              ticks: { color: getCSSVar('--text-muted'), maxTicksLimit: 10 },
+              grid: { color: getCSSVar('--border') } }
+          : { type: 'linear', min: xMin, max: xMax,
+              ticks: { color: getCSSVar('--text-muted'), maxTicksLimit: 10,
+                callback: function(val) {
+                  const d = new Date(val);
+                  const range = state.timeRange;
+                  if (range === '1h' || range === '6h') {
+                    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+                  }
+                  return (d.getMonth() + 1) + '/' + d.getDate();
+                },
+              },
+              grid: { color: getCSSVar('--border') } },
         y: {
           beginAtZero: true,
           afterFit: function(scale) { scale.width = 55; },
@@ -720,9 +736,12 @@ async function refreshGraph(graph) {
               if (!items.length) return '';
               return new Date(items[0].parsed.x).toLocaleString();
             },
+            ...(isBar ? { label: function(item) {
+                return item.parsed.y.toFixed(2);
+              } } : {}),
           },
         },
-        zoom: {
+        ...(isBar ? {} : { zoom: {
           zoom: {
             wheel: { enabled: true, speed: 0.05 },
             pinch: { enabled: true },
@@ -732,7 +751,7 @@ async function refreshGraph(graph) {
           limits: {
             x: { min: xMin, max: xMax, minRange: 60000 },
           },
-        },
+        } }),
       },
     },
   });
@@ -757,10 +776,12 @@ async function refreshGraph(graph) {
     isPanning = false;
   }
 
-  canvas.addEventListener('pointerdown', onPanStart);
-  canvas.addEventListener('pointermove', onPanMove);
-  canvas.addEventListener('pointerup', onPanEnd);
-  canvas.addEventListener('pointerleave', onPanEnd);
+  if (!isBar) {
+    canvas.addEventListener('pointerdown', onPanStart);
+    canvas.addEventListener('pointermove', onPanMove);
+    canvas.addEventListener('pointerup', onPanEnd);
+    canvas.addEventListener('pointerleave', onPanEnd);
+  }
 
   updateMax();
 }

@@ -307,6 +307,28 @@ $ curl -s http://localhost:8080/api/data/ppv/aggregate
   ]
 }
 
+# Pre-aggregated buckets (hourly or daily)
+$ curl -s "http://localhost:8080/api/data/e_day/aggregate?bucket=day&since=2026-07-01T00:00:00Z&limit=2"
+{
+  "aggregated": "day",
+  "sensor": "e_day",
+  "samples": [
+    {
+      "sampled_at": "2026-07-01T00:00:00Z",
+      "value": 9.6,
+      "value_min": 0.0,
+      "value_max": 3400.0,
+      "value_avg": 9.6,
+      "sample_count": 288
+    },
+    ...
+  ]
+}
+
+For bucket queries, each sample includes `value` (alias for `value_avg`, kept
+for backward compatibility), `value_min`, `value_max`, `value_avg`, and
+`sample_count` (number of raw readings aggregated into this bucket).
+
 # Custom time range
 $ curl -s "http://localhost:8080/api/data/ppv/aggregate?since=2026-06-14T00:00:00Z&until=2026-06-14T12:00:00Z&limit=500"
 
