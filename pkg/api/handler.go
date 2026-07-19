@@ -367,6 +367,13 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "failed to query aggregated samples")
 			return
 		}
+		// Look up the authoritative unit from the raw sample table so the
+		// dashboard doesn't need a name-based heuristic (which misclassifies
+		// sensors like e_load_day that contain "load" but are kWh counters).
+		var unit string
+		if s, err := h.store.LatestSample(r.Context(), sensorName); err == nil && s != nil {
+			unit = s.Unit
+		}
 		samples := make([]map[string]any, len(aggSamples))
 		for i, as := range aggSamples {
 			s := map[string]any{
@@ -376,6 +383,7 @@ func (h *Handler) handleGetAggregate(w http.ResponseWriter, r *http.Request) {
 				"value_avg":    as.ValueAvg,
 				"sample_count": as.SampleCount,
 				"sampled_at":   as.BucketStart,
+				"unit":         unit,
 			}
 			samples[i] = s
 		}

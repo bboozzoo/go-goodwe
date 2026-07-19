@@ -269,10 +269,12 @@ function sensorUnit(name) {
   if (lower.includes('temp')) return 'C';
   if (lower.includes('volt') || lower.startsWith('v')) return 'V';
   if (lower.includes('curr') || lower.startsWith('i')) return 'A';
+  if (lower.includes('freq') || lower.startsWith('f')) return 'Hz';
+  // energy/e_ must come before power/p*/consumption/load: sensors like
+  // e_load_day contain "load" but are kWh counters, not W gauges.
+  if (lower.includes('energy') || lower.startsWith('e_')) return 'kWh';
   if (lower.includes('power') || lower.startsWith('p') ||
       lower.includes('consumption') || lower.includes('load')) return 'W';
-  if (lower.includes('freq') || lower.startsWith('f')) return 'Hz';
-  if (lower.includes('energy') || lower.startsWith('e_')) return 'kWh';
   return '';
 }
 
