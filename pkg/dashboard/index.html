@@ -612,7 +612,10 @@ async function refreshGraph(graph) {
     try {
       const data = await fetchSensorData(name, params.since, params.until, 5000, params.bucket);
       const samples = data.samples || [];
-      const unit = sensorUnit(name);
+      // Use the authoritative unit from the API (e.g. "kWh" for e_load_day)
+      // rather than the name-based heuristic in sensorUnit(), which misclassifies
+      // sensors whose names contain "load" or start with "meter_".
+      const unit = (samples.length > 0 && samples[0].unit) ? samples[0].unit : sensorUnit(name);
       const isCounter = (unit === 'kWh');
       const raw = samples.map(s => {
         const x = new Date(s.sampled_at).getTime();
@@ -632,14 +635,26 @@ async function refreshGraph(graph) {
       const idx = datasets.length;
       const color = colorForIndex(idx);
       datasets.push(isBar
-        ? { label: name, data: down, backgroundColor: color, borderColor: color, borderWidth: 1, barPercentage: 0.9, categoryPercentage: 0.95 }
-        : { label: name, data: down, borderColor: color, fill: false, tension: 0.1, spanGaps: false, pointRadius: 0, borderWidth: 1 });
+        ? { label: name, data: down, dataUnit: unit, backgroundColor: color, borderColor: color, borderWidth: 1, barPercentage: 0.9, categoryPercentage: 0.95 }
+        : { label: name, data: down, dataUnit: unit, borderColor: color, fill: false, tension: 0.1, spanGaps: false, pointRadius: 0, borderWidth: 1 });
     } catch (e) {
       console.warn('Failed to fetch', name, e);
     }
   }
 
   if (spinner) spinner.style.display = 'none';
+  // Self-correct graph.unit from the API's authoritative unit (the name-based
+  // sensorUnit() heuristic in onSensorClick may have guessed wrong, e.g.
+  // "W" for e_load_day which is kWh).
+  if (datasets.length > 0 && datasets[0].dataUnit) {
+    graph.unit = datasets[0].dataUnit;
+    // Also update the unit badge in the graph card header.
+    const card = document.getElementById(`graph-${graph.id}`);
+    if (card) {
+      const unitEl = card.querySelector('.sensor-unit');
+      if (unitEl) unitEl.textContent = datasets[0].dataUnit || '';
+    }
+  }
   if (graph.chart) {
     graph.chart.destroy();
     graph.chart = null;
