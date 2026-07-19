@@ -706,7 +706,7 @@ async function refreshGraph(graph) {
       scales: {
         x: isBar
           ? { type: 'timeseries', min: xMin, max: xMax,
-              time: { unit: 'day', displayFormats: { day: 'M/D' } },
+              time: { unit: 'day', displayFormats: { day: 'M/d' } },
               ticks: { color: getCSSVar('--text-muted'), maxTicksLimit: 10 },
               grid: { color: getCSSVar('--border') } }
           : { type: 'linear', min: xMin, max: xMax,
