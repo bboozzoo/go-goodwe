@@ -1045,3 +1045,47 @@ func TestAggregateHourlyUsesSamplesTimeIndex(t *testing.T) {
 	require.NoError(t, rows.Err())
 	assert.True(t, foundIndex, "EXPLAIN QUERY PLAN should show idx_samples_time index usage")
 }
+
+// TestQueryAggregatedWithUntilNow verifies that hourly buckets on the same
+// calendar date as `until=now` are returned (not silently excluded by a
+// timestamp format mismatch between bucket_start storage and the bound).
+// This is the case the dashboard hits for its 7d/30d views.
+func TestQueryAggregatedWithUntilNow(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+
+	// Sample 2 hours into today and 3 days ago.
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V",
+		today.Add(2*time.Hour), samplePtr(42.0), nil))
+	require.NoError(t, s.InsertSample(ctx, "sensor_a", "V",
+		today.Add(-3*24*time.Hour).Add(6*time.Hour), samplePtr(100.0), nil))
+
+	_, err := s.AggregateHourly(ctx, time.Time{}, now)
+	require.NoError(t, err)
+	_, err = s.AggregateDaily(ctx, time.Time{}, now)
+	require.NoError(t, err)
+
+	since := now.Add(-7 * 24 * time.Hour)
+	until := now // same date as today's hourly bucket
+
+	// Hourly: must include today's bucket.
+	hourly, err := s.QueryAggregatedSamples(ctx, "sensor_a", since, until, "hour")
+	require.NoError(t, err)
+	require.NotEmpty(t, hourly, "hourly query with until=now must return rows")
+	foundToday := false
+	for _, a := range hourly {
+		if a.BucketStart.Truncate(24*time.Hour).Equal(today) {
+			foundToday = true
+			break
+		}
+	}
+	assert.True(t, foundToday, "today's hourly bucket must be returned when until=now")
+
+	// Daily: previous completed days only (today is incomplete, not aggregated).
+	daily, err := s.QueryAggregatedSamples(ctx, "sensor_a", since, until, "day")
+	require.NoError(t, err)
+	assert.Len(t, daily, 1, "should have 1 daily bucket for the previous completed day")
+}

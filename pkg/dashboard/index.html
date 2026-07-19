@@ -456,15 +456,25 @@ function downsample(data, max) {
   return result;
 }
 
-const GAP_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+// Gap threshold for breaking chart lines at missing-data boundaries. Scaled
+// by the bucket interval so aggregated data (hourly buckets 1h apart, daily
+// buckets 24h apart) is not shattered into invisible isolated points.
+function gapThresholdMs(bucket) {
+  switch (bucket) {
+    case 'hour': return 2 * 60 * 60 * 1000;       // 2 hours (2x hourly bucket)
+    case 'day':  return 2 * 24 * 60 * 60 * 1000;  // 2 days (2x daily bucket)
+    default:     return 10 * 60 * 1000;           // 10 minutes (raw samples)
+  }
+}
 
-function insertNullGaps(data) {
+function insertNullGaps(data, bucket) {
   if (data.length < 2) return data;
+  const threshold = gapThresholdMs(bucket);
   const result = [];
   for (let i = 0; i < data.length - 1; i++) {
     result.push(data[i]);
     const gap = data[i + 1].x - data[i].x;
-    if (gap > GAP_THRESHOLD_MS) {
+    if (gap > threshold) {
       // Insert a null point midway between the two points to break the line.
       result.push({ x: (data[i].x + data[i + 1].x) / 2, y: null });
     }
@@ -602,7 +612,7 @@ async function refreshGraph(graph) {
       const data = await fetchSensorData(name, params.since, params.until, 5000, params.bucket);
       const samples = data.samples || [];
       const raw = samples.map(s => ({ x: new Date(s.sampled_at).getTime(), y: s.value }));
-      const values = insertNullGaps(raw);
+      const values = insertNullGaps(raw, params.bucket);
       const down = downsample(values, MAX_POINTS);
       datasets.push({ label: name, data: down, borderColor: colorForIndex(datasets.length),
                       fill: false, tension: 0.1, spanGaps: false, pointRadius: 0,
